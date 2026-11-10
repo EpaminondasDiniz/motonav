@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_moto"
+        android:shortcutId="connect"
+        android:shortcutLongLabel="@string/shortcut_connect"
+        android:shortcutShortLabel="@string/shortcut_connect">
+        <intent
+            android:action="br.com.motonav.CONNECT"
+            android:targetClass="br.com.motonav.MainActivity"
+            android:targetPackage="br.com.motonav" />
+    </shortcut>
+</shortcuts>

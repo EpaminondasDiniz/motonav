@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <org.maplibre.android.maps.MapView
+        android:id="@+id/mapView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- Barra de busca + status (recebe padding da status bar no código) -->
+    <LinearLayout
+        android:id="@+id/topPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="28dp"
+            app:cardElevation="6dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="20dp"
+                android:paddingEnd="4dp">
+
+                <EditText
+                    android:id="@+id/etDestination"
+                    android:layout_width="0dp"
+                    android:layout_height="56dp"
+                    android:layout_weight="1"
+                    android:background="@android:color/transparent"
+                    android:hint="Para onde? (ou segure o dedo no mapa)"
+                    android:imeOptions="actionSearch"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:textSize="16sp" />
+
+                <ImageButton
+                    android:id="@+id/btnSearch"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Buscar"
+                    android:src="@android:drawable/ic_menu_search" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Sugestões enquanto digita (e destinos recentes) -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/suggestCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:visibility="gone"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="8dp">
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxHeight="420dp">
+
+                <LinearLayout
+                    android:id="@+id/suggestList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp" />
+            </ScrollView>
+        </com.google.android.material.card.MaterialCardView>
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/status_bg"
+            android:paddingStart="14dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="8dp"
+            android:text="Aguardando GPS..."
+            android:textColor="#FFFFFF"
+            android:textSize="14sp" />
+
+        <!-- Barra: início | moto (conexão e ajustes) | troca rápida para o Race -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/mapHome"
+                style="@style/BarButton"
+                android:text="⌂ Início" />
+
+            <Button
+                android:id="@+id/tvDashChip"
+                style="@style/BarButton"
+                android:layout_width="0dp"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:text="🏍 MOTO"
+                app:backgroundTint="#FF7A00" />
+
+            <Button
+                android:id="@+id/mapToRace"
+                style="@style/BarButton"
+                android:text="🏁 Race" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/bottomPanel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="16dp"
+        android:orientation="vertical">
+
+        <!-- Minhas rotas: rotas salvas, viagens e mapa offline -->
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/fabRoutes"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:contentDescription="Minhas rotas"
+            android:src="@android:drawable/btn_star_big_on"
+            app:fabSize="mini" />
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/fabClear"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:contentDescription="Limpar rota"
+            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:visibility="gone"
+            app:fabSize="mini" />
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/fabRecenter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:contentDescription="Minha posição"
+            android:src="@android:drawable/ic_menu_mylocation" />
+    </LinearLayout>
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabDash"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|start"
+        android:layout_margin="16dp"
+        android:contentDescription="Painel da moto"
+        android:src="@android:drawable/ic_menu_manage"
+        android:visibility="gone" />
+
+    <!-- Painel de testes da conexão com a moto (etapa 3a) -->
+    <LinearLayout
+        android:id="@+id/dashPanel"
+        android:layout_width="match_parent"
+        android:layout_height="420dp"
+        android:layout_gravity="bottom"
+        android:background="#F21E1E1E"
+        android:orientation="vertical"
+        android:padding="10dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvDashState"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Painel da moto"
+            android:textColor="#80FF80"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnPair"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:text="QR"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnConnect"
+                style="@style/Widget.Material3.Button"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.4"
+                android:layout_marginEnd="4dp"
+                android:text="Conectar"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnStop"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:text="Parar"
+                android:textSize="12sp" />
+
+            <Button
+                android:id="@+id/btnCopy"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1.2"
+                android:layout_marginEnd="4dp"
+                android:text="Copiar log"
+                android:textSize="12sp" />
+
+            <ImageButton
+                android:id="@+id/btnClosePanel"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="center_vertical"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Fechar"
+                android:src="@android:drawable/ic_menu_close_clear_cancel" />
+        </LinearLayout>
+
+        <ScrollView
+            android:id="@+id/svLog"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="6dp"
+            android:layout_weight="1">
+
+            <TextView
+                android:id="@+id/tvLog"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="#E0E0E0"
+                android:textIsSelectable="true"
+                android:textSize="10sp" />
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- Tela Race no celular e tela inicial (por cima do mapa) -->
+    <include layout="@layout/view_race" />
+    <include layout="@layout/view_maint" />
+    <include layout="@layout/view_home" />
+</FrameLayout>

@@ -1,0 +1,12 @@
+# Copie este arquivo para "local.properties" (que NÃO vai para o git).
+# O Android Studio preenche sdk.dir sozinho.
+# sdk.dir=C\:\\Users\\SEU_USUARIO\\AppData\\Local\\Android\\Sdk
+
+# Chave TomTom (opcional, gratuita em developer.tomtom.com; marque Traffic, Routing e Search API).
+# Também dá para deixar vazia e cada pessoa digitar a própria no app: Ajustes -> Chave TomTom.
+# Atenção: uma chave colocada aqui vai junto no APK e qualquer um consegue extraí-la.
+TOMTOM_KEY=
+
+# Com a chave daqui, rotas e incidentes da TomTom vêm DESLIGADOS (gastam cota). Para ligar:
+# TOMTOM_ROUTING=true
+# TOMTOM_INCIDENTS=true

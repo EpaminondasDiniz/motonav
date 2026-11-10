@@ -1,0 +1,23 @@
+*.iml
+.gradle
+.kotlin
+/local.properties
+local.properties
+/.idea
+.DS_Store
+/build
+/app/build
+/captures
+.externalNativeBuild
+.cxx
+
+# arquivos de trabalho e dados pessoais que não devem subir
+backup*/
+*.apk
+*.aab
+*.jks
+*.keystore
+*.log
+*_preview.png
+CLAUDE.md
+LEIA-ME.txt

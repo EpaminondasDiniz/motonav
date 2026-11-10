@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tela Race no celular: o mesmo painel que vai para a moto, ao vivo -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/raceScreen"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0B0B0F"
+    android:clickable="true"
+    android:focusable="true"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingTop="16dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="16dp"
+    android:visibility="gone">
+
+    <!-- barra: início | moto | troca rápida -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/raceHome"
+            style="@style/BarButton"
+            android:text="⌂ Início" />
+
+        <Button
+            android:id="@+id/raceMoto"
+            style="@style/BarButton"
+            android:layout_width="0dp"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="🏍 MOTO"
+            app:backgroundTint="#FF7A00" />
+
+        <Button
+            android:id="@+id/raceToMap"
+            style="@style/BarButton"
+            android:text="🗺 Mapa" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="22dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/raceTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:fontFamily="sans-serif-black"
+            android:text="RACE"
+            android:textColor="#FFFFFF"
+            android:textSize="28sp"
+            android:textStyle="italic" />
+
+        <Button
+            android:id="@+id/raceStyle"
+            style="@style/BarButton"
+            android:text="🎨 Trocar estilo" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="o mesmo que está no painel da moto"
+        android:textColor="#6B7180"
+        android:textSize="12sp" />
+
+    <com.google.android.material.card.MaterialCardView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        app:cardBackgroundColor="#000000"
+        app:cardCornerRadius="18dp"
+        app:cardElevation="0dp"
+        app:strokeColor="#FF7A00"
+        app:strokeWidth="2dp">
+
+        <ImageView
+            android:id="@+id/raceImage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:adjustViewBounds="true"
+            android:contentDescription="Painel Race" />
+    </com.google.android.material.card.MaterialCardView>
+
+    <TextView
+        android:id="@+id/raceInfo"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="16dp"
+        android:layout_weight="1"
+        android:lineSpacingExtra="6dp"
+        android:textColor="#C8CCD4"
+        android:textSize="15sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/raceReset"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_marginEnd="6dp"
+            android:layout_weight="1"
+            android:text="Zerar viagem" />
+
+        <Button
+            android:id="@+id/raceBigMap"
+            style="@style/Widget.Material3.Button"
+            android:layout_width="0dp"
+            android:layout_height="56dp"
+            android:layout_marginStart="6dp"
+            android:layout_weight="1"
+            android:backgroundTint="#FF7A00"
+            android:text="🗺 Ir para o Mapa"
+            android:maxLines="1"
+            android:textColor="#FFFFFF" />
+    </LinearLayout>
+</LinearLayout>

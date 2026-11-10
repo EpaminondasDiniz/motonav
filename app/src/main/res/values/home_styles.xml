@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- números rápidos da tela inicial -->
+    <style name="HomeStat">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:background">@drawable/home_tile_bg</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingTop">12dp</item>
+        <item name="android:paddingBottom">12dp</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:lineSpacingExtra">2dp</item>
+    </style>
+
+    <!-- atalhos da tela inicial -->
+    <style name="HomeAction" parent="Widget.Material3.Button.TonalButton">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">84dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:paddingStart">2dp</item>
+        <item name="android:paddingEnd">2dp</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="backgroundTint">#1E2029</item>
+        <item name="cornerRadius">18dp</item>
+    </style>
+
+    <!-- barra das telas Navegação/Race: botões de troca rápida -->
+    <style name="BarButton" parent="Widget.Material3.Button">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="backgroundTint">#E61E2029</item>
+        <item name="android:paddingStart">14dp</item>
+        <item name="android:paddingEnd">14dp</item>
+    </style>
+</resources>
