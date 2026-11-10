@@ -423,6 +423,8 @@ class DashLink private constructor(ctx: Context) {
 
     /** Sessão em que o vídeo já rodou (e o "deu certo" já foi avisado). */
     @Volatile private var okGen = -1
+    /** Última resposta do painel no P2C (sinal de vida do painel novo). */
+    @Volatile private var lastP2cRxAt = 0L
     /** Quando o painel abriu o vídeo nesta sessão (0 = ainda não). */
     @Volatile private var videoStartAt = 0L
 
@@ -572,8 +574,12 @@ class DashLink private constructor(ctx: Context) {
             } catch (e: java.net.SocketTimeoutException) {
                 // Painel novo (teste de 10/11 na 350R): parou de mandar sinal de vida no C2P ~3 s
                 // depois do vídeo, mas continuou pedindo quadros. Enquanto o vídeo andar, ele está vivo.
-                if (bleMode && System.currentTimeMillis() - rv.lastPollAt < 5_000) {
-                    if (!silentLogged) { DashLog.d("C2P mudo há 12 s, mas o painel continua pedindo vídeo: mantendo a conexão"); silentLogged = true }
+                // (testes de 10/11: as duas quedas foram exatamente 12 s depois do último sinal no C2P)
+                // Também vale a resposta do painel ao nosso sinal de vida no P2C (a cada 2 s): assim o
+                // piloto pode sair da projeção pelo guidão sem a conexão cair.
+                val now = System.currentTimeMillis()
+                if (bleMode && (now - rv.lastPollAt < 5_000 || now - lastP2cRxAt < 6_000)) {
+                    if (!silentLogged) { DashLog.d("C2P mudo há 12 s, mas o painel continua respondendo (vídeo/P2C): mantendo a conexão"); silentLogged = true }
                     continue
                 }
                 throw e
@@ -648,8 +654,10 @@ class DashLink private constructor(ctx: Context) {
         var lastLogged = 0
         while (running.get()) {
             val p = Pxc.read(input)
-            // as respostas ao 0x20020 chegam toda hora; registra só a cada 10
-            if (p.cmd != Pxc.CMD_P2C_DISPLAY + 1 || lastLogged++ % 10 == 0) {
+            lastP2cRxAt = System.currentTimeMillis()
+            // as respostas ao 0x20020 (ou ao nosso sinal de vida) chegam toda hora; registra só a cada 10
+            val routine = p.cmd == Pxc.CMD_P2C_DISPLAY + 1 || p.cmd == Pxc.CMD_KEEPALIVE + 1
+            if (!routine || lastLogged++ % 10 == 0) {
                 DashLog.d("P2C <- ${Pxc.hex(p.cmd)} ${Pxc.preview(p.payload)}")
             }
         }
