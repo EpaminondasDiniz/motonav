@@ -94,6 +94,13 @@ class DashMapSource(private val ctx: Context) : FrameSource {
         private const val KEEPALIVE_MS = 100L
         private const val STATS_MS = 10_000L
         private const val CAPTURE_INTERVAL_MS = 33L   // ~30 fps
+
+        /**
+         * Intervalo mínimo entre quadros mandados ao codificador (0 = sem limite). Painéis novos
+         * (Bluetooth + hotspot): 66 ms = 15 quadros/s, o ritmo do ZC-Panel, que funciona na 350R
+         * (no 1º teste, a ~25 quadros/s, o painel conectou e caiu em seguida).
+         */
+        @Volatile var minFrameMs = 0L
         private const val CAPTURE_CHECK_MS = 1_000L
         // a animação de entrada não repete se a conexão só caiu e voltou logo
         private const val INTRO_AGAIN_MS = 3 * 60_000L
@@ -446,6 +453,7 @@ class DashMapSource(private val ctx: Context) : FrameSource {
     private fun render(frame: (Canvas) -> Unit): Boolean {
         if (!attached) return false
         val s = encSurface ?: return false
+        if (minFrameMs > 0 && SystemClock.uptimeMillis() - lastDrawAt < minFrameMs) return false
         return try {
             val c = s.lockHardwareCanvas()
             try {

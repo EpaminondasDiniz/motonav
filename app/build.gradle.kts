@@ -27,8 +27,8 @@ android {
         minSdk = 29
         targetSdk = 37
         // A cada versão publicada: aumentar versionCode (+1) e versionName (a tag do GitHub é "v" + versionName).
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "TOMTOM_KEY", "\"$tomtomKey\"")

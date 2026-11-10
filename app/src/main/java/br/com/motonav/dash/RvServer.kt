@@ -45,6 +45,10 @@ class RvServer(private val ctx: Context) {
      * cada quadro como [int 4+tamanho][int índice][AUD + (SPS/PPS +) quadro], em pedaços de 4 KB.
      */
     @Volatile var extended = false
+        set(v) { field = v; DashMapSource.minFrameMs = if (v) 66L else 0L }
+
+    /** Último pedido de quadro do painel (o painel novo às vezes fica mudo no C2P com o vídeo rodando). */
+    @Volatile var lastPollAt = 0L
     @Volatile private var extByte = 1
 
     @Volatile private var width = 800
@@ -102,6 +106,8 @@ class RvServer(private val ctx: Context) {
         // O painel pede 4 Mbps, mas no modo captura (mapa andando) ele chegou a fechar o vídeo
         // recebendo ~500 KB/s. Limitamos a 3 Mbps para aliviar o Wi-Fi Direct e o decodificador.
         if (br > 0) bitRate = minOf(br, MAX_BITRATE)
+        // painel novo: 1,5 Mbit/s, como o ZC-Panel (o decodificador dele parece mais fraco)
+        if (extended) bitRate = minOf(bitRate, 1_500_000)
         if (extended) {
             // o codificador trabalha em blocos de 16 pixels
             if (width and 0xFFF0 >= 16) width = width and 0xFFF0
@@ -130,6 +136,7 @@ class RvServer(private val ctx: Context) {
 
         while (true) {
             val (cmd, _) = readCmd(input)
+            lastPollAt = System.currentTimeMillis()
             if (cmd != REQ_DATA_NEXT) {
                 DashLog.d("RV-DATA <- comando inesperado 0x%04X".format(cmd))
                 continue

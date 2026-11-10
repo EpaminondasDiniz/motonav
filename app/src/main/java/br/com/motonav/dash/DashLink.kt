@@ -250,7 +250,13 @@ class DashLink private constructor(ctx: Context) {
     @SuppressLint("MissingPermission")
     private fun onSessionLost() {
         if (!running.get() || !sessionStarted.getAndSet(false)) return
-        if (okGen != sessionGen) diag("erro", "a conexão caiu antes do vídeo. Último passo: $lastState")
+        // diagnóstico 2 s depois, para o log já ter o motivo da queda (que é registrado logo em seguida)
+        val step = lastState
+        val videoSecs = if (videoStartAt > 0) (SystemClock.elapsedRealtime() - videoStartAt) / 1000 else -1
+        if (okGen != sessionGen) main.postDelayed({ diag("erro", "a conexão caiu antes do vídeo. Último passo: $step") }, 2000)
+        else if (bleMode && videoSecs in 0..600) // painel novo: queda logo depois de funcionar é suspeita
+            main.postDelayed({ diag("erro", "conectou, mas caiu depois de $videoSecs s de vídeo. Último passo: $step") }, 2000)
+        videoStartAt = 0
         connecting.set(false)
         panelAddr = null
         localLinkAddr = null
@@ -417,6 +423,8 @@ class DashLink private constructor(ctx: Context) {
 
     /** Sessão em que o vídeo já rodou (e o "deu certo" já foi avisado). */
     @Volatile private var okGen = -1
+    /** Quando o painel abriu o vídeo nesta sessão (0 = ainda não). */
+    @Volatile private var videoStartAt = 0L
 
     private fun everOk() = app.getSharedPreferences("report", Context.MODE_PRIVATE).getBoolean("everOk", false)
 
@@ -457,6 +465,7 @@ class DashLink private constructor(ctx: Context) {
         }
         listen(Pxc.PORT_RV_DATA) { s ->
             videoConns.incrementAndGet()
+            if (videoStartAt == 0L) videoStartAt = SystemClock.elapsedRealtime()
             try {
                 state("Painel pediu o vídeo (10920). Enviando o mapa...")
                 br.com.motonav.Compat.onConnected(app) // 1ª vez com este painel: avisa a lista de compatíveis
@@ -556,8 +565,19 @@ class DashLink private constructor(ctx: Context) {
     private fun c2pLoop(input: InputStream, s: Socket) {
         val out = s.getOutputStream()
         state("Painel abriu o canal de controle (C2P).")
+        var silentLogged = false
         while (running.get()) {
-            val p = Pxc.read(input)
+            val p = try {
+                Pxc.read(input)
+            } catch (e: java.net.SocketTimeoutException) {
+                // Painel novo (teste de 10/11 na 350R): parou de mandar sinal de vida no C2P ~3 s
+                // depois do vídeo, mas continuou pedindo quadros. Enquanto o vídeo andar, ele está vivo.
+                if (bleMode && System.currentTimeMillis() - rv.lastPollAt < 5_000) {
+                    if (!silentLogged) { DashLog.d("C2P mudo há 12 s, mas o painel continua pedindo vídeo: mantendo a conexão"); silentLogged = true }
+                    continue
+                }
+                throw e
+            }
             val c = p.cmd
             // 0x104A0 traz uma conta de atualização do fabricante: não vai para o log (nem para relatórios)
             DashLog.d("C2P <- ${Pxc.hex(c)} " + if (c == 0x000104A0) "(dados de atualização do fabricante, ocultos)" else Pxc.preview(p.payload))

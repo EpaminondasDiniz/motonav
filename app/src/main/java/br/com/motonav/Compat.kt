@@ -35,11 +35,12 @@ object Compat {
 
     /** CLIENT_INFO do painel. */
     fun onPanelInfo(ctx: Context, huName: String, channel: String, huid: String) {
-        panelModel = huName
+        // o painel novo (350R 2026) se apresenta com HUName vazio
+        panelModel = huName.ifBlank { "sem nome" }
         panelChannel = channel
         panelKey = hash(huid.ifBlank { huName + channel })
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString("model", huName).putString("channel", channel).apply()
+            .putString("model", panelModel).putString("channel", channel).apply()
     }
 
     /** Configuração de vídeo pedida pelo painel (resolução da tela). */
