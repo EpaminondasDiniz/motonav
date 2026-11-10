@@ -290,6 +290,13 @@
             android:layout_marginTop="4dp"
             android:text="💬 Avisar mensagens no painel (só o nome de quem mandou)" />
 
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/sheetRideScreen"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="🔋 Tela de pilotagem: com a Economia de energia ligada, deixar a tela acesa e preta para o GPS não parar" />
+
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

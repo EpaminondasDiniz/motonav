@@ -88,6 +88,8 @@ class DashService : Service() {
                 .createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "MotoNav:dash").apply { acquire() }
         }
         if (!holdsGps) holdsGps = LocationHub.acquire(this) // GPS continua com a tela apagada
+        // Economia de energia ligada: ao apagar a tela, acende a tela de pilotagem (preta)
+        br.com.motonav.RideScreenGuard.start(this)
         return START_NOT_STICKY
     }
 
@@ -116,6 +118,7 @@ class DashService : Service() {
     }
 
     override fun onDestroy() {
+        br.com.motonav.RideScreenGuard.stop(this)
         if (holdsGps) { LocationHub.release(); holdsGps = false }
         runCatching { wakeLock?.release() }
         runCatching { wifiLock?.release() }

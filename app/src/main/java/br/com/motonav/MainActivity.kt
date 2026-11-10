@@ -485,6 +485,16 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        v.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.sheetRideScreen).apply {
+            isChecked = RideScreenGuard.enabled(this@MainActivity)
+            setOnCheckedChangeListener { _, on ->
+                RideScreenGuard.setEnabled(this@MainActivity, on)
+                if (on && !RideScreenGuard.canShow(this@MainActivity)) {
+                    toast("Permita \"tela cheia\" para o MotoNav abrir por cima da tela de bloqueio")
+                    runCatching { startActivity(RideScreenGuard.permissionIntent(this@MainActivity)) }
+                }
+            }
+        }
         v.findViewById<Button>(R.id.sheetCrash).apply {
             CrashDetector.load(this@MainActivity)
             text = if (CrashDetector.ready()) "🆘 Detecção de queda: ligada (${CrashDetector.contactName})" else "🆘 Detecção de queda: desligada"
@@ -1994,6 +2004,25 @@ class MainActivity : AppCompatActivity() {
         )
         if (!cutsGps) { batteryDialog?.dismiss(); batteryDialog = null; return }
         if (batteryDialog?.isShowing == true) return
+        // Com a tela de pilotagem (tela acesa e preta) o GPS continua mesmo com a Economia ligada.
+        if (RideScreenGuard.enabled(this)) {
+            if (RideScreenGuard.canShow(this)) { batteryDialog?.dismiss(); batteryDialog = null; return }
+            batteryDialog = AlertDialog.Builder(this)
+                .setTitle("Economia de energia ligada")
+                .setMessage(
+                    "A Economia de energia desliga o GPS quando a tela do celular apaga. Para o mapa do " +
+                        "painel continuar andando, o app acende a tela toda preta (no brilho mínimo, quase " +
+                        "não gasta) sempre que ela apagar com a moto conectada.\n\nPara isso, permita que o " +
+                        "app abra em tela cheia por cima da tela de bloqueio."
+                )
+                .setPositiveButton("Permitir") { _, _ ->
+                    runCatching { startActivity(RideScreenGuard.permissionIntent(this)) }
+                        .onFailure { toast("Libere \"notificações em tela cheia\" nas configurações do app") }
+                }
+                .setNegativeButton("Agora não", null)
+                .show()
+            return
+        }
         batteryDialog = AlertDialog.Builder(this)
             .setTitle("Economia de energia ligada")
             .setMessage(

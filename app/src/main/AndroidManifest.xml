@@ -90,6 +90,15 @@
 
         <!-- Tela vermelha da queda (abre por cima da tela de bloqueio) -->
         <activity
+            android:name=".RideScreen"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:taskAffinity=""
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
+        <activity
             android:name=".CrashActivity"
             android:exported="false"
             android:excludeFromRecents="true"

@@ -78,8 +78,11 @@ Passo a passo completo: [guia em PDF](docs/Guia-MotoNav.pdf) (para mandar no gru
    novo: o Bluetooth precisa estar ligado; o celular cria um hotspot só para o painel, e a internet
    do app passa a vir dos dados móveis enquanto isso.
 
-Para funcionar com a tela apagada, deixe o app com bateria **"Sem restrições"** e não use a Economia
-de energia: em alguns aparelhos ela desliga o GPS com a tela apagada.
+Para funcionar com a tela apagada, deixe o app com bateria **"Sem restrições"**. Em alguns aparelhos a
+**Economia de energia** desliga o GPS com a tela apagada; desde a v1.2, com ela ligada e a moto
+conectada, o app acende uma **tela de pilotagem** toda preta no brilho mínimo (em tela AMOLED quase
+não gasta) sempre que a tela apagar, e o GPS continua. Para sair, segure o dedo 1 segundo. Dá para
+desligar na tela Moto.
 
 ## Privacidade
 

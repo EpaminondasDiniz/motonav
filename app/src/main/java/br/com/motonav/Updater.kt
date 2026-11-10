@@ -15,7 +15,8 @@ object Updater {
     data class Release(val version: String, val notes: String, val apkUrl: String?, val pageUrl: String)
 
     private const val PREFS = "updater"
-    private const val DAY_MS = 24 * 3600 * 1000L
+    /** Antes era 1x por dia; versão nova demorava até 1 dia para aparecer. A API do GitHub aguenta. */
+    private const val DAY_MS = 3 * 3600 * 1000L
 
     val enabled: Boolean get() = BuildConfig.UPDATE_REPO.isNotBlank()
 

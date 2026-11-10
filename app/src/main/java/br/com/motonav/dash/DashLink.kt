@@ -56,6 +56,9 @@ class DashLink private constructor(ctx: Context) {
 
     val isRunning: Boolean get() = running.get()
 
+    /** Conectado ao painel agora (não só procurando). */
+    val sessionActive: Boolean get() = running.get() && sessionStarted.get()
+
     /** A busca parou sozinha por tempo esgotado (não foi o usuário que tocou em Parar). */
     @Volatile var stoppedIdle = false
         private set
