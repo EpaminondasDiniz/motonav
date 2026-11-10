@@ -45,7 +45,9 @@ class RvServer(private val ctx: Context) {
      * cada quadro como [int 4+tamanho][int índice][AUD + (SPS/PPS +) quadro], em pedaços de 4 KB.
      */
     @Volatile var extended = false
-        set(v) { field = v; DashMapSource.minFrameMs = if (v) 66L else 0L }
+        // v1.3 limitava o painel novo a 15 quadros/s; os logs mostraram que a queda era o timeout do
+        // C2P, não a taxa (a 350R recebeu ~25–30 quadros/s sem problema). Na v1.4 roda igual ao antigo.
+        set(v) { field = v; DashMapSource.minFrameMs = 0L }
 
     /** Último pedido de quadro do painel (o painel novo às vezes fica mudo no C2P com o vídeo rodando). */
     @Volatile var lastPollAt = 0L
@@ -106,8 +108,6 @@ class RvServer(private val ctx: Context) {
         // O painel pede 4 Mbps, mas no modo captura (mapa andando) ele chegou a fechar o vídeo
         // recebendo ~500 KB/s. Limitamos a 3 Mbps para aliviar o Wi-Fi Direct e o decodificador.
         if (br > 0) bitRate = minOf(br, MAX_BITRATE)
-        // painel novo: 1,5 Mbit/s, como o ZC-Panel (o decodificador dele parece mais fraco)
-        if (extended) bitRate = minOf(bitRate, 1_500_000)
         if (extended) {
             // o codificador trabalha em blocos de 16 pixels
             if (width and 0xFFF0 >= 16) width = width and 0xFFF0

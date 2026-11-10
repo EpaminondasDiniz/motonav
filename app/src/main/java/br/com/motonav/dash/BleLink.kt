@@ -162,26 +162,57 @@ class BleLink(private val ctx: Context, private val dash: DashPairing.Dash, priv
     // ------------------------------------------------------------------ GATT
 
     private fun connect(dev: BluetoothDevice): Boolean {
-        for (attempt in 1..3) {
+        for (attempt in 1..4) {
             if (!alive()) return false
             events.clear()
+            serial = null
             gatt = dev.connectGatt(ctx, false, callback, BluetoothDevice.TRANSPORT_LE)
             val ev = events.poll(15, TimeUnit.SECONDS)
+            var was133 = ev?.endsWith(":133") == true
             if (ev == "conn:true") {
+                // alguns celulares (Xiaomi, Android 14, log de 10/11) se perdem se pedirem MTU e
+                // serviços logo no instante da conexão: espera um pouco
+                Thread.sleep(600)
                 // MTU maior: o quadro do hotspot (~120 bytes) cabe numa escrita só
                 gatt?.requestMtu(247)
-                events.poll(5, TimeUnit.SECONDS)
-                gatt?.discoverServices()
-                if (waitEvent("svc", 10_000) && serial != null) return enableNotify()
-                DashLog.d("BLE: serviço b360 não encontrado")
+                waitEvent("mtu", 3_000)
+                if (discover(attempt)) return enableNotify()
             } else DashLog.d("BLE: conexão falhou (tentativa $attempt, $ev)")
-            // o Android às vezes falha a 1ª conexão (status 133); tentar de novo resolve
-            gatt?.let { runCatching { it.close() } }
+            // o Android às vezes falha a conexão (status 133); fechar, esperar e tentar de novo resolve
+            gatt?.let { runCatching { it.disconnect() }; runCatching { it.close() } }
             gatt = null
-            Thread.sleep(1000)
+            if (events.any { it.endsWith(":133") }) was133 = true
+            Thread.sleep(if (was133) 2500 else 1200)
         }
         return false
     }
+
+    /**
+     * Lista os serviços e acha a b362. Se o Android devolver a lista sem o serviço do painel
+     * (cópia antiga guardada no celular), limpa essa cópia (BluetoothGatt.refresh, como fazem outros
+     * apps de BLE) e pede de novo; se ele nem responder, pede de novo uma vez.
+     */
+    private fun discover(attempt: Int): Boolean {
+        for (round in 1..3) {
+            val g = gatt ?: return false
+            svcInfo = ""
+            if (!g.discoverServices()) DashLog.d("BLE: discoverServices recusado")
+            val came = waitEvent("svc", 10_000)
+            if (serial != null) return true
+            if (!came) {
+                DashLog.d("BLE: o celular não listou os serviços em 10 s (tentativa $attempt.$round)")
+                if (round >= 2) return false
+                continue
+            }
+            DashLog.d("BLE: serviço b360 não encontrado (tentativa $attempt.$round). Serviços vistos: ${svcInfo.ifEmpty { "nenhum" }}")
+            val refreshed = runCatching { g.javaClass.getMethod("refresh").invoke(g) as? Boolean }.getOrNull()
+            DashLog.d("BLE: limpando a lista de serviços guardada no celular (refresh=$refreshed) e pedindo de novo")
+            Thread.sleep(800)
+        }
+        return false
+    }
+
+    @Volatile private var svcInfo = ""
 
     private fun enableNotify(): Boolean {
         val g = gatt ?: return false
@@ -290,6 +321,10 @@ class BleLink(private val ctx: Context, private val dash: DashPairing.Dash, priv
         override fun onMtuChanged(g: BluetoothGatt, value: Int, status: Int) { mtu = value; events.offer("mtu") }
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
             serial = g.getService(SERVICE)?.getCharacteristic(SERIAL)
+            svcInfo = "status $status: " + g.services.joinToString(" ") {
+                val u = it.uuid.toString()
+                if (u.endsWith("-0000-1000-8000-00805f9b34fb")) u.substring(4, 8) else u.substring(0, 8)
+            }
             events.offer("svc")
         }
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) { events.offer("desc") }
