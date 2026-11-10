@@ -157,9 +157,9 @@ class SetupWizard(
         }
         b.addView(nameField)
         b.addView(gap(12))
-        b.addView(text("Qual é a sua moto?", 14f, dim))
+        b.addView(text("Qual é a sua moto e o ano?", 14f, dim))
         bikeField = EditText(act).apply {
-            hint = "Ex.: Zontes T350X"
+            hint = "Ex.: Zontes T350X 2024"
             setText(DashScreen.bikeModel)
             setTextColor(Color.WHITE); setHintTextColor(Color.rgb(100, 104, 116))
             inputType = android.text.InputType.TYPE_TEXT_FLAG_CAP_WORDS
@@ -172,9 +172,9 @@ class SetupWizard(
             "• Não mexa no celular pilotando. Configure tudo parado.\n" +
                 "• Navegação, radares e limites vêm de mapas abertos e podem estar errados: respeite a sinalização.\n" +
                 "• A detecção de queda é uma ajuda e pode falhar; não substitui cuidado nem socorro.\n" +
-                "• Na primeira conexão com o painel, o app avisa quem mantém o projeto qual moto e qual painel conectaram " +
-                "(seu nome ou apelido, a moto, o modelo do painel e do celular), para saber com quais motos ele funciona. " +
-                "Não vai localização. Dá para desligar em Ajustes.\n" +
+                "• A cada conexão com o painel (deu certo ou deu erro), o app manda um diagnóstico para quem mantém o projeto: " +
+                "seu nome ou apelido, a moto e o ano, o modelo do painel e do celular e o registro da conexão (sem localização, ruas, " +
+                "MAC nem senhas), para descobrir com quais motos ele funciona e corrigir erros. Dá para desligar na tela Moto.\n" +
                 "• Projeto independente e gratuito, sem vínculo com a fabricante da moto nem com a Carbit. Uso por sua conta e risco.",
             orange))
     }
@@ -187,6 +187,10 @@ class SetupWizard(
         if (Build.VERSION.SDK_INT >= 33) {
             b.addView(status("Dispositivos Wi-Fi próximos", "para encontrar o painel da moto", has(Manifest.permission.NEARBY_WIFI_DEVICES)))
             b.addView(status("Notificações", "para manter a conexão com o painel", has(Manifest.permission.POST_NOTIFICATIONS)))
+        }
+        if (Build.VERSION.SDK_INT >= 31) {
+            b.addView(status("Bluetooth (dispositivos próximos)", "motos 2025 em diante conectam por ele",
+                has(Manifest.permission.BLUETOOTH_SCAN) && has(Manifest.permission.BLUETOOTH_CONNECT)))
         }
         b.addView(gap(12))
         b.addView(button("Permitir") { actions.requestPermissions() })
@@ -253,7 +257,7 @@ class SetupWizard(
         b.addView(gap(12))
         b.addView(button(if (d != null) "Ler outro QR" else "Ler QR do painel", tonal = d != null) { actions.scanQr() })
         b.addView(gap(8))
-        b.addView(text("Se aparecer \"QR não reconhecido\", procure no painel outro QR: o certo é o que leva para o Carbit Ride com o endereço do painel.", 13f, dim))
+        b.addView(text("Funciona com os dois tipos de painel: o antigo (dois QR, o certo tem o endereço do painel) e o novo, de 2025 em diante (um QR só, com \"ID:CARBIT…\" embaixo). O app descobre sozinho qual é.", 13f, dim))
     }
 
     private fun test(b: LinearLayout) {

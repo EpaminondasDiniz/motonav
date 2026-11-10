@@ -34,6 +34,9 @@ object Report {
         sb.appendLine("Wi-Fi ligado: ${if (wifi.isWifiEnabled) "sim" else "NÃO"} · Wi-Fi Direct: " +
             if (ctx.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI_DIRECT)) "sim" else "NÃO")
         sb.appendLine("Internet: ${if (Net.online) "sim" else "NÃO"}")
+        val bt = runCatching { ctx.getSystemService(android.bluetooth.BluetoothManager::class.java)?.adapter?.isEnabled }.getOrNull()
+        sb.appendLine("Bluetooth ligado: ${when (bt) { true -> "sim"; false -> "NÃO"; null -> "?" }}" +
+            (if (Build.VERSION.SDK_INT >= 31) " · permissão: ${perm(Manifest.permission.BLUETOOTH_SCAN)}/${perm(Manifest.permission.BLUETOOTH_CONNECT)}" else ""))
         sb.appendLine("--- Permissões")
         sb.appendLine("Localização precisa: ${perm(Manifest.permission.ACCESS_FINE_LOCATION)} · o tempo todo: ${perm(Manifest.permission.ACCESS_BACKGROUND_LOCATION)}")
         if (Build.VERSION.SDK_INT >= 33) {
@@ -46,7 +49,7 @@ object Report {
         sb.appendLine("--- Moto e painel")
         sb.appendLine("Moto: ${DashScreen.bikeModel.ifBlank { "não informada" }}")
         sb.appendLine("Painel: ${Compat.panelModel.ifBlank { "ainda não conectou" }} · canal ${Compat.panelChannel.ifBlank { "?" }} · tela ${Compat.screen.ifBlank { "?" }}")
-        sb.appendLine("Pareado: ${DashPairing.load(ctx)?.name ?: "não"}")
+        sb.appendLine("Pareado: " + (DashPairing.load(ctx)?.let { "${it.name} · " + if (it.isBle) "modelo novo (Bluetooth + hotspot)" else "Wi-Fi Direct" } ?: "não"))
         sb.appendLine("Carbit Ride instalado: ${if (installed(ctx, CARBIT_PACKAGE)) "sim (forçar parada antes de usar)" else "não"}")
         sb.appendLine("Tela: ${DashScreen.mode} · estilo Race: ${DashScreen.raceStyle.title}")
         sb.appendLine("Chave TomTom: ${if (TomTom.enabled) (if (TomTom.hasUserKey) "digitada no app" else "do APK") else "não"}")
@@ -63,6 +66,10 @@ object Report {
         var s = log
         // MAC (aa:bb:cc:dd:ee:ff, também escrito com %3A)
         s = Regex("(?i)\\b[0-9a-f]{2}((:|%3A)[0-9a-f]{2}){5}\\b").replace(s, "xx:xx:xx:xx:xx:xx")
+        // nome Bluetooth e código do painel novo (vêm do MAC) e nome do hotspot do celular
+        s = Regex("\\bEC[0-9A-Fa-f]{8}\\b").replace(s, "ECxxxxxxxx")
+        s = Regex("CARBIT[0-9A-Fa-f]{12}").replace(s, "CARBITxxxxxxxxxxxx")
+        s = Regex("hotspot ativo: \"[^\"]*\"").replace(s, "hotspot ativo: \"(oculto)\"")
         // campos de identificação no JSON do painel
         s = Regex("(?i)\"(HUID|sn|pwd|password|userName|btAddress|btPin|phoneUUID|token)\"\\s*:\\s*\"[^\"]*\"")
             .replace(s) { "\"${it.groupValues[1]}\": \"(oculto)\"" }
@@ -104,6 +111,81 @@ object Report {
             "🏍 ${clean(Compat.summary())}\n" +
             "📱 ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} · v${BuildConfig.VERSION_NAME}" +
             (if (desc.isNotEmpty()) "\n> ${clean(desc).replace("\n", "\n> ")}" else "")
+        val err = multipart(content, file.name, file.readBytes())
+        if (err == null) { p.edit().putLong("lastSent", now).apply(); DashLog.d("relatório enviado") }
+        return err
+    }
+
+    // ------------------------------------------------------------------ diagnóstico automático de conexão
+
+    private const val AUTO_OK_MS = 6 * 3_600_000L   // "deu certo": no máximo 1 a cada 6 h por celular
+    private const val AUTO_FAIL_MS = 10 * 60_000L   // erro: no máximo 1 a cada 10 min
+    private const val AUTO_NOTFOUND_MS = 24 * 3_600_000L // painel novo não apareceu: 1 por dia
+
+    /**
+     * Manda sozinho o resultado de uma tentativa de conexão com o painel (o pessoal tinha dificuldade
+     * de enviar o relatório à mão). Vai junto o registro já filtrado (sem MAC, ruas, senhas).
+     * [kind]: "ok", "erro" ou "nao_achou". Respeita a chave da tela Moto. Se não houver internet,
+     * guarda e manda na próxima vez.
+     */
+    fun connection(ctx: Context, kind: String, step: String) {
+        if (!canSend || !Compat.enabled(ctx)) return
+        val p = ctx.getSharedPreferences("report", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        val (key, gap) = when (kind) {
+            "ok" -> "autoOk" to AUTO_OK_MS
+            "nao_achou" -> "autoNotFound" to AUTO_NOTFOUND_MS
+            else -> "autoFail" to AUTO_FAIL_MS
+        }
+        if (now - p.getLong(key, 0L) < gap) return
+        p.edit().putLong(key, now).apply()
+        val pairing = DashPairing.load(ctx)
+        val icon = when (kind) { "ok" -> "✅ **Conectou**"; "nao_achou" -> "🔎 **Painel não encontrado**"; else -> "❌ **Erro na conexão**" }
+        val content = "$icon · ${clean(DashScreen.riderName.ifBlank { "Sem nome" })}\n" +
+            "🏍 ${clean(Compat.summary())} · " + (if (pairing?.isBle == true) "painel novo (Bluetooth)" else "painel antigo (Wi-Fi Direct)") + "\n" +
+            "📱 ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} · v${BuildConfig.VERSION_NAME}\n" +
+            "> ${clean(step).take(300)}"
+        val log = build(ctx).toByteArray()
+        Thread {
+            val name = "conexao_" + SimpleDateFormat("yyyy-MM-dd_HHmm", Locale.US).format(Date()) + ".txt"
+            if (multipart(content, name, log) == null) {
+                DashLog.d("diagnóstico de conexão enviado ($kind)")
+                flushPending(ctx)
+            } else savePending(ctx, content, name, log)
+        }.start()
+    }
+
+    private fun pendingDir(ctx: Context) = File(ctx.filesDir, "pendentes").apply { mkdirs() }
+
+    private fun savePending(ctx: Context, content: String, name: String, log: ByteArray) {
+        val dir = pendingDir(ctx)
+        val files = dir.listFiles()?.sortedBy { it.name } ?: emptyList()
+        files.dropLast(8).forEach { it.delete() } // guarda no máximo uns 5 diagnósticos
+        File(dir, "${System.currentTimeMillis()}.json").writeText(
+            org.json.JSONObject().put("content", content).put("name", name)
+                .put("log", String(log, Charsets.UTF_8)).toString())
+        DashLog.d("diagnóstico de conexão guardado para mandar depois (sem internet)")
+    }
+
+    /** Manda os diagnósticos que ficaram guardados (chamado ao abrir a conexão e depois de um envio). */
+    fun flushPending(ctx: Context) {
+        if (!canSend) return
+        val files = pendingDir(ctx).listFiles()?.sortedBy { it.name } ?: return
+        if (files.isEmpty()) return
+        Thread {
+            for (f in files) {
+                val j = runCatching { org.json.JSONObject(f.readText()) }.getOrNull()
+                if (j == null) { f.delete(); continue }
+                if (multipart(j.optString("content") + "\n(enviado depois)", j.optString("name"), j.optString("log").toByteArray()) == null) f.delete()
+                else break
+                Thread.sleep(1500)
+            }
+        }.start()
+    }
+
+    /** POST multipart no Discord: texto + arquivo. null = deu certo. Bloqueia. */
+    private fun multipart(content: String, fileName: String, data: ByteArray): String? {
+        val now = System.currentTimeMillis()
         // sem menções: ninguém consegue mandar @everyone pelo relatório
         val payload = org.json.JSONObject()
             .put("username", "Relatórios do app")
@@ -122,12 +204,11 @@ object Report {
                 fun w(s: String) = out.write(s.toByteArray(Charsets.UTF_8))
                 w("--$boundary\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n")
                 w(payload.toString()); w("\r\n")
-                w("--$boundary\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"${file.name}\"\r\nContent-Type: text/plain\r\n\r\n")
-                out.write(file.readBytes()); w("\r\n--$boundary--\r\n")
+                w("--$boundary\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"$fileName\"\r\nContent-Type: text/plain\r\n\r\n")
+                out.write(data); w("\r\n--$boundary--\r\n")
             }
             val code = conn.responseCode
-            if (code in 200..299) { p.edit().putLong("lastSent", now).apply(); DashLog.d("relatório enviado"); null }
-            else "o servidor respondeu $code"
+            if (code in 200..299) null else "o servidor respondeu $code"
         } catch (e: Exception) {
             "sem conexão (${e.message})"
         } finally {

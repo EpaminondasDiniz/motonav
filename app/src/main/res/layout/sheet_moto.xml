@@ -72,7 +72,7 @@
             android:id="@+id/sheetBike"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="Sua moto (ex.: Zontes T350X)"
+            android:hint="Sua moto e o ano (ex.: Zontes T350X 2024)"
             android:importantForAutofill="no"
             android:inputType="textCapWords"
             android:maxLength="40"
@@ -331,7 +331,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Avisar o suporte qual moto conectou (1ª vez com cada painel)" />
+            android:text="Enviar o diagnóstico de cada conexão ao suporte (deu certo ou erro)" />
 
         <Button
             android:id="@+id/sheetReport"

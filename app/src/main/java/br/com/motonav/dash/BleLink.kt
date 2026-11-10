@@ -1,0 +1,394 @@
+package br.com.motonav.dash
+
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.wifi.SoftApConfiguration
+import android.net.wifi.WifiManager
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.NetworkInterface
+import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
+
+/**
+ * Painéis novos (Zontes 2025+): o celular não usa Wi-Fi Direct. A sequência é
+ *  1. acha o painel no Bluetooth LE (nome "EC" + 8 letras, ou serviço b360) e conecta;
+ *  2. CLIENT_INFO (0x30) e BUILD_NET (0x50) até o painel responder status=2 ("crie a rede");
+ *  3. o celular cria um hotspot local (LocalOnlyHotspot, sem compartilhar a internet);
+ *  4. manda nome/senha/IP do hotspot (0x52); o painel entra e conta o IP dele (0x53); 0x51 fecha.
+ * Daí em diante é igual ao Wi-Fi Direct: wakeup na 10930 e o painel conecta de volta na 10922/21/20.
+ * O Bluetooth continua conectado durante a sessão (o painel pede a hora por ele).
+ *
+ * Sequência aprendida com o projeto aberto ZC-Panel (testado na 350R 2026); código próprio.
+ */
+@SuppressLint("MissingPermission")
+class BleLink(private val ctx: Context, private val dash: DashPairing.Dash, private val alive: () -> Boolean) {
+
+    class Result(val panelIp: InetAddress, val phoneIp: InetAddress)
+
+    companion object {
+        val SERVICE: UUID = UUID.fromString("0000b360-d6d8-c7ec-bdf0-eab1bfc6bcbc")
+        val SERIAL: UUID = UUID.fromString("0000b362-d6d8-c7ec-bdf0-eab1bfc6bcbc")
+        val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+        private const val SCAN_MS = 20_000L
+        private const val NET_INFO_MS = 40_000L
+    }
+
+    private val main = Handler(Looper.getMainLooper())
+    private val bt = ctx.getSystemService(BluetoothManager::class.java)
+    private val wifi = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+
+    @Volatile private var gatt: BluetoothGatt? = null
+    @Volatile private var serial: BluetoothGattCharacteristic? = null
+    @Volatile private var mtu = 23
+    @Volatile private var reservation: WifiManager.LocalOnlyHotspotReservation? = null
+    @Volatile private var closed = false
+    private val frames = LinkedBlockingQueue<EcBtp.Frame>()
+    private val assembler = EcBtp.Assembler()
+    private val events = LinkedBlockingQueue<String>() // "conn:<ok>", "mtu", "svc", "desc", "write"
+    private val writeLock = Object()
+
+    /** Chamado se o Bluetooth cair depois de provisionado (moto desligada). */
+    @Volatile var onLost: (() -> Unit)? = null
+    @Volatile private var provisioned = false
+
+    /** Onde parou na última tentativa (vai no diagnóstico automático). */
+    @Volatile var why = ""
+    /** O painel apareceu no Bluetooth? */
+    @Volatile var found = false
+
+    private fun fail(msg: String): Result? { why = msg; DashLog.d("BLE: $msg"); return null }
+
+    /** Faz tudo; devolve os IPs ou null (o motivo vai para o log/estado e em [why]). */
+    fun provision(state: (String) -> Unit): Result? {
+        val adapter = bt?.adapter
+        if (adapter == null || !adapter.isEnabled) { state("Ligue o Bluetooth do celular (a sua moto conecta por ele)."); return fail("Bluetooth do celular desligado") }
+        state("Procurando a moto no Bluetooth (ligue a moto e abra no painel a tela do QR)...")
+        val dev = findDevice() ?: return fail("painel ${dash.bleName ?: ""} não apareceu no Bluetooth em ${SCAN_MS / 1000} s")
+        found = true
+        if (!alive()) return null
+        state("Moto encontrada no Bluetooth. Conectando...")
+        if (!connect(dev)) return fail("achou o painel, mas a conexão Bluetooth (GATT/b362) falhou")
+        if (!handshake()) return fail(if (why.isNotEmpty()) why else "painel não respondeu status=2 ao BUILD_NET")
+        if (!alive()) return null
+        state("Criando o hotspot do celular para o painel...")
+        val ap = startHotspot() ?: return fail("o Android não criou o hotspot ($hotspotErr)")
+        val phoneIp = hostedAddress() ?: return fail("hotspot criado, mas a interface ficou sem IP")
+        DashLog.d("hotspot ativo: \"${ap.ssid}\" (${ap.auth}), celular em ${phoneIp.hostAddress}")
+        val apFrame = EcBtp.apInfo(ap.ssid, ap.pwd, ap.auth, phoneIp.hostAddress ?: "")
+            ?: return fail("nome/senha do hotspot grandes demais para o quadro BLE")
+        frames.clear()
+        state("Passando o hotspot para o painel...")
+        if (!write(apFrame, "AP_INFO (hotspot, senha oculta)")) return fail("falhou ao mandar o hotspot (0x52) pelo Bluetooth")
+        val info = waitFrame(NET_INFO_MS) { it.cmd == EcBtp.CAR_NET_INFO }
+            ?: return fail("hotspot enviado (${ap.auth}), mas o painel não contou o IP (0x53) em ${NET_INFO_MS / 1000} s")
+        val ip = EcBtp.ips(info).firstOrNull() ?: return fail("0x53 sem IP: $info")
+        DashLog.d("BLE <- painel entrou no hotspot com IP $ip")
+        write(EcBtp.build(EcBtp.BUILD_NET_FINISH), "BUILD_NET_FINISH")
+        write(EcBtp.syncTime(), "hora (0x01)") // o relógio do painel conta desde a ignição se ninguém acertar
+        provisioned = true
+        startTimeResponder()
+        return Result(InetAddress.getByName(ip), phoneIp)
+    }
+
+    fun close() {
+        if (closed) return
+        closed = true
+        provisioned = false
+        gatt?.let { g -> runCatching { g.disconnect() }; runCatching { g.close() } }
+        gatt = null
+        reservation?.let { runCatching { it.close() } }
+        reservation = null
+        DashLog.d("BLE: Bluetooth e hotspot encerrados")
+    }
+
+    // ------------------------------------------------------------------ busca
+
+    private fun findDevice(): BluetoothDevice? {
+        val scanner = bt?.adapter?.bluetoothLeScanner ?: return null
+        val exact = dash.bleMac?.uppercase()
+        val name = dash.bleName?.uppercase()
+        var best: ScanResult? = null
+        var match: BluetoothDevice? = null
+        val done = CountDownLatch(1)
+        val cb = object : ScanCallback() {
+            override fun onScanResult(type: Int, r: ScanResult) {
+                val n = (r.scanRecord?.deviceName ?: runCatching { r.device.name }.getOrNull())?.uppercase()
+                val uuids = r.scanRecord?.serviceUuids?.joinToString(" ") { it.uuid.toString() }.orEmpty().lowercase()
+                if ((exact != null && r.device.address.equals(exact, true)) || (name != null && n == name)) {
+                    if (match == null) DashLog.d("BLE: painel encontrado $n (rssi ${r.rssi})")
+                    match = r.device; done.countDown(); return
+                }
+                val looks = (n?.matches(Regex("EC[0-9A-F]{8}")) == true) || uuids.contains("0000b360") || uuids.contains("00006967")
+                if (looks && (best == null || r.rssi > best!!.rssi)) {
+                    if (best?.device?.address != r.device.address) DashLog.d("BLE: painel parecido $n (rssi ${r.rssi})")
+                    best = r
+                }
+            }
+            override fun onScanFailed(errorCode: Int) { DashLog.d("BLE: busca falhou ($errorCode)"); done.countDown() }
+        }
+        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+        runCatching { scanner.startScan(null, settings, cb) }.onFailure { DashLog.d("BLE: ${it.message}"); return null }
+        val deadline = System.currentTimeMillis() + SCAN_MS
+        while (alive() && System.currentTimeMillis() < deadline && !done.await(250, TimeUnit.MILLISECONDS)) {
+            // sem nome/endereço conhecido, o 1º painel "parecido" serve depois de 5 s de busca
+            if (exact == null && name == null && best != null && System.currentTimeMillis() > deadline - SCAN_MS + 5_000) break
+        }
+        runCatching { scanner.stopScan(cb) }
+        match?.let { return it }
+        if (exact == null && name == null) return best?.device
+        best?.let { DashLog.d("BLE: o painel do QR (${dash.bleName}) não apareceu; há outro painel por perto (${it.scanRecord?.deviceName})") }
+        // com o endereço Bluetooth do QR dá para tentar conectar direto
+        return exact?.let { runCatching { bt?.adapter?.getRemoteDevice(it) }.getOrNull() }
+    }
+
+    // ------------------------------------------------------------------ GATT
+
+    private fun connect(dev: BluetoothDevice): Boolean {
+        for (attempt in 1..3) {
+            if (!alive()) return false
+            events.clear()
+            gatt = dev.connectGatt(ctx, false, callback, BluetoothDevice.TRANSPORT_LE)
+            val ev = events.poll(15, TimeUnit.SECONDS)
+            if (ev == "conn:true") {
+                // MTU maior: o quadro do hotspot (~120 bytes) cabe numa escrita só
+                gatt?.requestMtu(247)
+                events.poll(5, TimeUnit.SECONDS)
+                gatt?.discoverServices()
+                if (waitEvent("svc", 10_000) && serial != null) return enableNotify()
+                DashLog.d("BLE: serviço b360 não encontrado")
+            } else DashLog.d("BLE: conexão falhou (tentativa $attempt, $ev)")
+            // o Android às vezes falha a 1ª conexão (status 133); tentar de novo resolve
+            gatt?.let { runCatching { it.close() } }
+            gatt = null
+            Thread.sleep(1000)
+        }
+        return false
+    }
+
+    private fun enableNotify(): Boolean {
+        val g = gatt ?: return false
+        val c = serial ?: return false
+        g.setCharacteristicNotification(c, true)
+        val d = c.getDescriptor(CCCD) ?: run { DashLog.d("BLE: b362 sem CCCD"); return false }
+        val value = if (c.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0)
+            BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE else BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+        events.clear()
+        val ok = if (Build.VERSION.SDK_INT >= 33) g.writeDescriptor(d, value) == BluetoothStatusCodes.SUCCESS
+        else @Suppress("DEPRECATION") run { d.value = value; g.writeDescriptor(d) }
+        if (!ok || !waitEvent("desc", 5_000)) { DashLog.d("BLE: não consegui ativar as notificações"); return false }
+        DashLog.d("BLE: conectado (MTU $mtu), notificações ativas")
+        return true
+    }
+
+    private fun handshake(): Boolean {
+        frames.clear()
+        write(EcBtp.clientInfo("MotoNav"), "CLIENT_INFO")
+        val hs = waitFrame(4_000) { it.cmd == EcBtp.CLIENT_INFO || it.cmd == EcBtp.HANDSHAKE_RESPONSE }
+        if (hs == null) DashLog.d("BLE: painel não respondeu ao CLIENT_INFO; seguindo")
+        write(EcBtp.syncTime(), "hora (0x01)")
+        // status -1 = painel ainda "pensando"; o ZC-Panel repete até 6x a cada 1 s
+        for (attempt in 1..6) {
+            if (!alive()) return false
+            if (!write(EcBtp.build(EcBtp.BUILD_NET), "BUILD_NET")) return false
+            val r = waitFrame(4_000) { it.cmd == EcBtp.BUILD_NET }
+            val status = r?.field("status")?.toIntOrNull()
+            DashLog.d("BLE: BUILD_NET tentativa $attempt: status=$status")
+            when (status) {
+                2 -> return true
+                -1, null -> Thread.sleep(1000)
+                else -> {
+                    why = "BUILD_NET status=$status (só o 2 = hotspot do celular é suportado): ${r?.text?.take(150)}"
+                    return false
+                }
+            }
+        }
+        return false
+    }
+
+    private fun write(frame: ByteArray, label: String): Boolean = synchronized(writeLock) {
+        val g = gatt ?: return false
+        val c = serial ?: return false
+        val canNoResp = frame.size <= mtu - 3 && c.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0 &&
+            c.properties and BluetoothGattCharacteristic.PROPERTY_WRITE == 0
+        val type = if (canNoResp) BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        events.remove("write")
+        val ok = if (Build.VERSION.SDK_INT >= 33) g.writeCharacteristic(c, frame, type) == BluetoothStatusCodes.SUCCESS
+        else @Suppress("DEPRECATION") run { c.writeType = type; c.value = frame; g.writeCharacteristic(c) }
+        DashLog.d("BLE -> $label (${frame.size} bytes)" + if (ok) "" else " FALHOU")
+        if (ok && type == BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) waitEvent("write", 3_000)
+        ok
+    }
+
+    private fun waitEvent(name: String, ms: Long): Boolean {
+        val until = System.currentTimeMillis() + ms
+        while (true) {
+            val left = until - System.currentTimeMillis()
+            if (left <= 0) return false
+            val e = events.poll(left, TimeUnit.MILLISECONDS) ?: return false
+            if (e == name) return true
+            if (e.startsWith("conn:false")) return false
+        }
+    }
+
+    private fun waitFrame(ms: Long, match: (EcBtp.Frame) -> Boolean): EcBtp.Frame? {
+        val until = System.currentTimeMillis() + ms
+        while (alive()) {
+            val left = until - System.currentTimeMillis()
+            if (left <= 0) return null
+            val f = frames.poll(minOf(left, 500), TimeUnit.MILLISECONDS) ?: continue
+            if (answerTime(f)) continue
+            if (match(f)) return f
+            DashLog.d("BLE <- $f")
+        }
+        return null
+    }
+
+    /** O painel pode pedir a hora a qualquer momento (0x01 / 0x55). */
+    private fun answerTime(f: EcBtp.Frame): Boolean = when (f.cmd) {
+        EcBtp.SYNC_TIME -> { write(EcBtp.syncTime(), "hora (0x01)"); true }
+        EcBtp.QUERY_TIME -> { write(EcBtp.queryTime(), "hora em texto (0x55)"); true }
+        else -> false
+    }
+
+    /** Depois de provisionado: continua respondendo à hora e registra o resto. */
+    private fun startTimeResponder() {
+        Thread({
+            while (!closed) {
+                val f = runCatching { frames.poll(1, TimeUnit.SECONDS) }.getOrNull() ?: continue
+                if (!answerTime(f)) DashLog.d("BLE <- $f")
+            }
+        }, "dash-ble-rx").apply { isDaemon = true }.start()
+    }
+
+    private val callback = object : BluetoothGattCallback() {
+        override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            if (newState == BluetoothProfile.STATE_CONNECTED) events.offer("conn:true")
+            else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                DashLog.d("BLE: desconectado (status $status)")
+                events.offer("conn:false:$status")
+                if (provisioned && !closed) onLost?.invoke()
+            }
+        }
+        override fun onMtuChanged(g: BluetoothGatt, value: Int, status: Int) { mtu = value; events.offer("mtu") }
+        override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            serial = g.getService(SERVICE)?.getCharacteristic(SERIAL)
+            events.offer("svc")
+        }
+        override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) { events.offer("desc") }
+        override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) { events.offer("write") }
+        override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
+            assembler.feed(value).forEach { frames.offer(it) }
+        }
+        @Deprecated("API < 33")
+        @Suppress("DEPRECATION")
+        override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
+            if (Build.VERSION.SDK_INT < 33) assembler.feed(c.value ?: return).forEach { frames.offer(it) }
+        }
+    }
+
+    // ------------------------------------------------------------------ hotspot do celular
+
+    private class Ap(val ssid: String, val pwd: String, val auth: String)
+    @Volatile private var hotspotErr = "sem resposta"
+
+    private fun startHotspot(): Ap? {
+        for (attempt in 1..2) {
+            val latch = CountDownLatch(1)
+            var result: Ap? = null
+            val cb = object : WifiManager.LocalOnlyHotspotCallback() {
+                override fun onStarted(res: WifiManager.LocalOnlyHotspotReservation) {
+                    if (closed) { res.close(); latch.countDown(); return }
+                    reservation = res
+                    result = readAp(res)
+                    latch.countDown()
+                }
+                override fun onStopped() { DashLog.d("hotspot encerrado pelo Android") }
+                override fun onFailed(reason: Int) {
+                    hotspotErr = "código $reason"
+                    DashLog.d("hotspot falhou: " + when (reason) {
+                        WifiManager.LocalOnlyHotspotCallback.ERROR_NO_CHANNEL -> "sem canal livre"
+                        WifiManager.LocalOnlyHotspotCallback.ERROR_INCOMPATIBLE_MODE -> "modo incompatível (desligue o roteador/ancoragem do celular)"
+                        WifiManager.LocalOnlyHotspotCallback.ERROR_TETHERING_DISALLOWED -> "ancoragem bloqueada"
+                        else -> "erro $reason"
+                    })
+                    latch.countDown()
+                }
+            }
+            try {
+                wifi.startLocalOnlyHotspot(cb, main)
+            } catch (e: Exception) {
+                DashLog.d("hotspot recusado: ${e.message}")
+                return null
+            }
+            latch.await(20, TimeUnit.SECONDS)
+            result?.let { return it }
+            // visto no ZC-Panel: "modo incompatível" na 1ª vez e sucesso logo depois
+            Thread.sleep(2500)
+        }
+        return null
+    }
+
+    private fun readAp(res: WifiManager.LocalOnlyHotspotReservation): Ap? {
+        if (Build.VERSION.SDK_INT >= 30) {
+            val c = res.softApConfiguration
+            val ssid = (if (Build.VERSION.SDK_INT >= 33) c.wifiSsid?.bytes?.toString(Charsets.UTF_8) else @Suppress("DEPRECATION") c.ssid)
+                ?.removeSurrounding("\"") ?: return null
+            val auth = when (c.securityType) {
+                SoftApConfiguration.SECURITY_TYPE_OPEN -> "NONE"
+                SoftApConfiguration.SECURITY_TYPE_WPA3_SAE -> { DashLog.d("hotspot só WPA3: o painel pode não aceitar"); "WPA3" }
+                else -> "WPA2"
+            }
+            return Ap(ssid, c.passphrase.orEmpty(), auth)
+        }
+        @Suppress("DEPRECATION")
+        val w = res.wifiConfiguration ?: return null
+        @Suppress("DEPRECATION")
+        return Ap(w.SSID.removeSurrounding("\""), w.preSharedKey?.removeSurrounding("\"").orEmpty(), "WPA2")
+    }
+
+    /** IP do celular na interface do hotspot (não a do Wi-Fi de casa nem a dos dados móveis). */
+    private fun hostedAddress(): InetAddress? {
+        val until = System.currentTimeMillis() + 15_000
+        while (System.currentTimeMillis() < until && alive()) {
+            hostedCandidate()?.let { return it }
+            Thread.sleep(250)
+        }
+        return null
+    }
+
+    @Suppress("DEPRECATION")
+    private fun hostedCandidate(): InetAddress? = runCatching {
+        val cm = ctx.getSystemService(ConnectivityManager::class.java)
+        val uplinks = cm.allNetworks.mapNotNull { cm.getLinkProperties(it) }
+            .flatMap { lp -> lp.linkAddresses.mapNotNull { it.address as? Inet4Address } }.toSet()
+        val names = listOf("ap", "swlan", "softap", "wlan1", "wlan2")
+        NetworkInterface.getNetworkInterfaces().toList()
+            .filter { it.isUp && !it.isLoopback && !it.isPointToPoint && !it.name.startsWith("p2p") }
+            .flatMap { nif -> nif.interfaceAddresses.map { nif to it } }
+            .filter { (nif, ia) ->
+                val a = ia.address as? Inet4Address ?: return@filter false
+                val hosted = names.any { nif.name.lowercase().startsWith(it) }
+                a.isSiteLocalAddress && (hosted || a !in uplinks) && ia.networkPrefixLength in 16..30
+            }
+            .sortedByDescending { (nif, _) -> names.any { nif.name.lowercase().startsWith(it) } }
+            .firstOrNull()?.second?.address
+    }.getOrNull()
+}

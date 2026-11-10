@@ -92,12 +92,13 @@ class MainActivity : AppCompatActivity() {
 
     private val nearbyLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { result ->
-        val nearbyOk = Build.VERSION.SDK_INT < 33 ||
-            ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES) ==
-            PackageManager.PERMISSION_GRANTED
-        if (nearbyOk) dashLink.start()
-        else DashLog.d("Sem permissão de dispositivos Wi-Fi próximos: não dá para achar o painel.")
+    ) { _ ->
+        val missing = missingDashPermissions().filter { it != Manifest.permission.POST_NOTIFICATIONS }
+        if (missing.isEmpty()) dashLink.start()
+        else {
+            DashLog.d("Sem permissão para achar o painel: ${missing.joinToString { it.substringAfterLast('.') }}")
+            toast("Sem a permissão de dispositivos próximos o app não acha o painel")
+        }
     }
 
     private val permissionLauncher = registerForActivityResult(
@@ -126,6 +127,10 @@ class MainActivity : AppCompatActivity() {
                 if (Build.VERSION.SDK_INT >= 33) {
                     list.add(Manifest.permission.NEARBY_WIFI_DEVICES)
                     list.add(Manifest.permission.POST_NOTIFICATIONS)
+                }
+                if (Build.VERSION.SDK_INT >= 31) { // motos 2025+ conectam pelo Bluetooth
+                    list.add(Manifest.permission.BLUETOOTH_SCAN)
+                    list.add(Manifest.permission.BLUETOOTH_CONNECT)
                 }
                 wizardPermLauncher.launch(list.toTypedArray())
             }
@@ -363,7 +368,7 @@ class MainActivity : AppCompatActivity() {
         st.startsWith("Painel pediu o vídeo") -> DashStatus.ONLINE
         st.startsWith("Procurando") || st.startsWith("Conexão com o painel caiu") -> DashStatus.SEARCHING
         st.startsWith("Desconectado") || st.startsWith("Painel não encontrado") ||
-            st.startsWith("Ligue o Wi-Fi") -> DashStatus.OFF
+            st.startsWith("Ligue o Wi-Fi") || st.startsWith("Ligue o Bluetooth") -> DashStatus.OFF
         dashStatus == DashStatus.ONLINE -> DashStatus.ONLINE // mensagens de canal com o vídeo já rodando
         else -> DashStatus.CONNECTING
     }
@@ -913,8 +918,9 @@ class MainActivity : AppCompatActivity() {
             return
         }
         DashPairing.save(this, d)
-        DashLog.d("Painel pareado: ${d.name} ${d.mac}")
-        toast("Painel ${d.name} pareado ✓")
+        DashLog.d("Painel pareado: ${d.name} ${d.mac} (${if (d.isBle) "modelo novo: Bluetooth + hotspot" else "Wi-Fi Direct"})")
+        toast(if (d.isBle) "Painel ${d.name} pareado ✓ (modelo novo, conecta pelo Bluetooth)" else "Painel ${d.name} pareado ✓")
+        if (d.isBle && missingDashPermissions().isNotEmpty()) nearbyLauncher.launch(missingDashPermissions().toTypedArray())
         refreshPairedLabel()
         dashStatus = DashStatus.OFF
         refreshDashChip(null)
@@ -929,7 +935,15 @@ class MainActivity : AppCompatActivity() {
         } else {
             needed.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
-        return needed.filter {
+        // painel novo: Bluetooth (Android 12+ pede "dispositivos próximos"; antes disso, localização)
+        if (DashPairing.load(this)?.isBle == true) {
+            if (Build.VERSION.SDK_INT >= 31) {
+                needed.add(Manifest.permission.BLUETOOTH_SCAN)
+                needed.add(Manifest.permission.BLUETOOTH_CONNECT)
+            }
+            needed.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        return needed.distinct().filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
     }

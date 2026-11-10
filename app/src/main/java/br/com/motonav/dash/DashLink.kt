@@ -80,7 +80,9 @@ class DashLink private constructor(ctx: Context) {
     private val rv = RvServer(app)
 
     var onStateChanged: ((String) -> Unit)? = null
+    @Volatile private var lastState = ""
     private fun state(s: String) {
+        lastState = s
         DashLog.d("== $s")
         main.post { onStateChanged?.invoke(s) }
     }
@@ -92,7 +94,7 @@ class DashLink private constructor(ctx: Context) {
         val d = DashPairing.load(app)
         if (d == null) { state("Painel não pareado. Escaneie o QR code primeiro."); return }
         val wifi = app.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        if (!wifi.isWifiEnabled) { state("Ligue o Wi-Fi do celular (não precisa estar conectado a nenhuma rede)."); return }
+        if (!d.isBle && !wifi.isWifiEnabled) { state("Ligue o Wi-Fi do celular (não precisa estar conectado a nenhuma rede)."); return }
         if (running.get()) {
             DashLog.d("reiniciando a conexão")
             stop()
@@ -101,11 +103,20 @@ class DashLink private constructor(ctx: Context) {
         stoppedIdle = false
         searchUntil = SystemClock.elapsedRealtime() + SEARCH_FIRST_MS
         DashService.start(app)
+        br.com.motonav.Report.flushPending(app)
 
         dash = d
         connecting.set(false)
         sessionStarted.set(false)
-        DashLog.d("Painel pareado: ${d.name} (${d.mac}) | app: ${app.packageName}")
+        bleMode = d.isBle
+        rv.extended = d.isBle
+        DashLog.d("Painel pareado: ${d.name} (${d.mac}) | ${if (d.isBle) "Bluetooth + hotspot" else "Wi-Fi Direct"} | app: ${app.packageName}")
+
+        if (d.isBle) {
+            startServers()
+            startBle()
+            return
+        }
 
         val ch = p2p.initialize(app, Looper.getMainLooper()) { DashLog.d("canal Wi-Fi Direct perdido") }
         channel = ch
@@ -120,6 +131,8 @@ class DashLink private constructor(ctx: Context) {
         if (!running.getAndSet(false)) return
         main.removeCallbacksAndMessages(null)
         panelAddr = null
+        localLinkAddr = null
+        ble?.close(); ble = null
         synchronized(sockets) { sockets.forEach { runCatching { it.close() } }; sockets.clear() }
         rv.stop()
         DashService.stop(app)
@@ -166,6 +179,7 @@ class DashLink private constructor(ctx: Context) {
             // novo (ou tocar em Conectar) a busca recomeça.
             stoppedIdle = true
             stop()
+            if (!everOk()) diag("nao_achou", "Wi-Fi Direct: o painel ${dash?.name} não apareceu na busca em ${SEARCH_FIRST_MS / 60_000} min")
             state("Painel não encontrado (moto desligada?). Busca parada para poupar bateria. " +
                 "Abra o app ou toque em Conectar para procurar de novo.")
             return
@@ -233,15 +247,70 @@ class DashLink private constructor(ctx: Context) {
     @SuppressLint("MissingPermission")
     private fun onSessionLost() {
         if (!running.get() || !sessionStarted.getAndSet(false)) return
+        if (okGen != sessionGen) diag("erro", "a conexão caiu antes do vídeo. Último passo: $lastState")
         connecting.set(false)
         panelAddr = null
+        localLinkAddr = null
         searchUntil = SystemClock.elapsedRealtime() + SEARCH_AFTER_LOST_MS
         state("Conexão com o painel caiu. Procurando de novo por ${SEARCH_AFTER_LOST_MS / 60_000} min...")
         rv.stop()
         synchronized(sockets) { sockets.forEach { runCatching { it.close() } }; sockets.clear() }
+        if (bleMode) {
+            ble?.close(); ble = null
+            main.postDelayed({ if (running.get() && !sessionStarted.get()) startBle() }, 3000)
+            return
+        }
         main.post {
             channel?.let { ch -> runCatching { p2p.removeGroup(ch, null) } }
             scheduleDiscover(3000)
+        }
+    }
+
+    // ------------------------------------------------------------------ painéis novos (Bluetooth + hotspot)
+
+    /** Painel pareado pelo QR novo (sem Wi-Fi Direct). */
+    @Volatile private var bleMode = false
+    @Volatile private var ble: BleLink? = null
+    private val bleBusy = AtomicBoolean(false)
+    /** IP do celular na rede onde o painel está (hotspot); no Wi-Fi Direct fica null e vale a p2p. */
+    @Volatile private var localLinkAddr: InetAddress? = null
+    @Volatile private var c2pOpenedGen = -1
+
+    private fun startBle() {
+        val d = dash ?: return
+        if (!bleBusy.compareAndSet(false, true)) return
+        thread(name = "dash-ble") {
+            try {
+                while (running.get() && !sessionStarted.get()) {
+                    if (SystemClock.elapsedRealtime() > searchUntil) {
+                        stoppedIdle = true
+                        main.post { stop() }
+                        state("Painel não encontrado (moto desligada?). Busca parada para poupar bateria. " +
+                            "Abra o app ou toque em Conectar para procurar de novo.")
+                        return@thread
+                    }
+                    val link = BleLink(app, d) { running.get() }
+                    ble = link
+                    val r = link.provision { state(it) }
+                    if (r != null && running.get()) {
+                        link.onLost = { DashLog.d("Bluetooth do painel caiu (moto desligada?)"); onSessionLost() }
+                        sessionGen++
+                        sessionStarted.set(true)
+                        connecting.set(true)
+                        panelAddr = r.panelIp
+                        localLinkAddr = r.phoneIp
+                        state("Painel entrou no hotspot do celular (${r.panelIp.hostAddress}).")
+                        sendWakeup(r.panelIp)
+                        return@thread
+                    }
+                    if (running.get() && (link.found || !everOk())) diag(if (link.found) "erro" else "nao_achou", "Bluetooth: ${link.why}")
+                    link.close()
+                    if (ble === link) ble = null
+                    if (running.get()) Thread.sleep(4000)
+                }
+            } finally {
+                bleBusy.set(false)
+            }
         }
     }
 
@@ -260,9 +329,9 @@ class DashLink private constructor(ctx: Context) {
             if (!running.get()) return
             try {
                 Socket().use { s ->
-                    localP2pAddress()?.let {
+                    (localLinkAddr ?: localP2pAddress())?.let {
                         s.bind(InetSocketAddress(it, 0))
-                        DashLog.d("IP do celular no Wi-Fi Direct: ${it.hostAddress}")
+                        DashLog.d("IP do celular na rede do painel: ${it.hostAddress}")
                     }
                     s.connect(InetSocketAddress(go, Pxc.PORT_WAKEUP), 3000)
                     s.soTimeout = 5000
@@ -278,15 +347,101 @@ class DashLink private constructor(ctx: Context) {
                     state(if (ok.equals("true", true))
                         "Painel respondeu status=true. Aguardando ele conectar de volta..."
                     else "Painel respondeu status=$ok (pode ter recusado o app). Veja o log.")
+                    if (!ok.equals("true", true)) diag("erro", "o painel respondeu ao wakeup (10930) com status=$ok: ${Pxc.preview(resp.payload, 200)}")
                 }
+                if (bleMode) reprobeIfSilent(go)
                 return
             } catch (e: Exception) {
                 if (attempt <= 3 || attempt % 5 == 0) DashLog.d("wakeup tentativa $attempt falhou: ${e.message}")
                 Thread.sleep(1000)
             }
         }
+        diag("erro", "rede com o painel OK, mas a porta 10930 dele não respondeu em 20 tentativas")
         state("Não consegui falar com o painel na porta 10930. Tentando de novo...")
         onSessionLost()
+    }
+
+    /**
+     * Visto pelo ZC-Panel na 350R: às vezes o painel aceita o wakeup e não conecta de volta.
+     * Se o C2P não abrir em 8 s, manda o wakeup de novo (até 3 vezes).
+     */
+    private fun reprobeIfSilent(go: InetAddress) {
+        val gen = sessionGen
+        for (i in 1..3) {
+            Thread.sleep(8000)
+            if (!running.get() || gen != sessionGen || c2pOpenedGen == gen) return
+            DashLog.d("painel não conectou de volta em 8 s; wakeup de novo ($i/3)")
+            runCatching {
+                Socket().use { s ->
+                    localLinkAddr?.let { s.bind(InetSocketAddress(it, 0)) }
+                    s.connect(InetSocketAddress(go, Pxc.PORT_WAKEUP), 3000)
+                    s.soTimeout = 5000
+                    val body = JSONObject().put("phoneType", "Android").put("packageName", app.packageName)
+                        .toString().toByteArray()
+                    Pxc.write(s.getOutputStream(), Pxc.CMD_WAKEUP, body)
+                    DashLog.d("10930 <- " + Pxc.preview(Pxc.read(s.getInputStream()).payload))
+                }
+            }.onFailure { DashLog.d("wakeup de novo falhou: ${it.message}") }
+        }
+        if (running.get() && gen == sessionGen && c2pOpenedGen != gen) {
+            diag("erro", "o painel aceitou o wakeup, mas não conectou de volta na 10922 em 32 s")
+            state("O painel aceitou o app mas não abriu a conexão. Tentando de novo...")
+            onSessionLost()
+        }
+    }
+
+    /** Hora no formato do Carbit, para o 0x10450 (painéis novos zeram o relógio com resposta vazia). */
+    private fun timeJson(): ByteArray {
+        val now = System.currentTimeMillis()
+        val f = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm:ss", java.util.Locale.US)
+        val dt = f.format(java.util.Date(now)) + ":%03d".format(java.util.Locale.US, now % 1000)
+        return JSONObject().put("time", now).put("dateTime", dt).toString().toByteArray()
+    }
+
+    /** Resposta ao 0x10600 (sincronização de hora): mesmo cabeçalho de 16 bytes + "yyyy-MM-dd HH:mm:ss.SSS000000". */
+    private fun timeSyncReply(req: ByteArray): ByteArray {
+        val out = ByteArray(45)
+        if (req.size >= 16) System.arraycopy(req, 0, out, 0, 16)
+        val bike = if (req.size > 16) String(req, 16, minOf(29, req.size - 16), Charsets.US_ASCII).trimEnd('\u0000', ' ') else ""
+        val stamp = if ((bike.take(4).toIntOrNull() ?: 0) in 2020..2099) bike
+        else java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date()) + "000000"
+        val a = stamp.toByteArray(Charsets.US_ASCII)
+        System.arraycopy(a, 0, out, 16, minOf(29, a.size))
+        return out
+    }
+
+    // ------------------------------------------------------------------ diagnóstico automático
+
+    /** Sessão em que o vídeo já rodou (e o "deu certo" já foi avisado). */
+    @Volatile private var okGen = -1
+
+    private fun everOk() = app.getSharedPreferences("report", Context.MODE_PRIVATE).getBoolean("everOk", false)
+
+    private fun diag(kind: String, step: String) = runCatching { br.com.motonav.Report.connection(app, kind, step) }
+
+    /** 15 s depois de o painel abrir o vídeo: se continua aberto, a conexão deu certo. */
+    private fun checkVideoOk() {
+        val gen = sessionGen
+        main.postDelayed({
+            if (running.get() && gen == sessionGen && okGen != gen && videoConns.get() > 0) {
+                okGen = gen
+                app.getSharedPreferences("report", Context.MODE_PRIVATE).edit().putBoolean("everOk", true).apply()
+                diag("ok", "vídeo do mapa rodando no painel há 15 s (" + (if (bleMode) "Bluetooth + hotspot" else "Wi-Fi Direct") + ")")
+            }
+        }, 15_000)
+    }
+
+    /** Painéis novos fecham a sessão se o celular não mandar sinal de vida nas conexões 10922. */
+    private fun startPhoneHeartbeat(s: Socket) {
+        val out = s.getOutputStream()
+        thread(name = "dash-hb-${s.port}") {
+            try {
+                while (running.get() && !s.isClosed) {
+                    Thread.sleep(2000)
+                    Pxc.write(out, Pxc.CMD_KEEPALIVE)
+                }
+            } catch (_: Exception) { }
+        }
     }
 
     // ------------------------------------------------------------------ servidores
@@ -302,6 +457,7 @@ class DashLink private constructor(ctx: Context) {
             try {
                 state("Painel pediu o vídeo (10920). Enviando o mapa...")
                 br.com.motonav.Compat.onConnected(app) // 1ª vez com este painel: avisa a lista de compatíveis
+                checkVideoOk()
                 rv.handleData(s)
             } finally {
                 if (videoConns.decrementAndGet() == 0) watchVideo()
@@ -334,7 +490,7 @@ class DashLink private constructor(ctx: Context) {
         val expected = panelAddr ?: return false
         if (s.inetAddress != expected) return false
         // chegou pela interface p2p (se o aparelho não tiver uma com nome "p2p", vale só o endereço)
-        val local = localP2pAddress() ?: return true
+        val local = localLinkAddr ?: localP2pAddress() ?: return true
         return s.localAddress == local
     }
 
@@ -379,8 +535,10 @@ class DashLink private constructor(ctx: Context) {
         val first = Pxc.read(input)
         DashLog.d("10922 <- canal ${Pxc.hex(first.cmd)}")
         Pxc.write(out, first.cmd + 1)
+        if (bleMode) startPhoneHeartbeat(s)
         when (first.cmd) {
             Pxc.CONN_C2P -> {
+                c2pOpenedGen = sessionGen
                 // O painel manda sinal de vida a cada ~2-3 s. Se a moto for desligada de repente o
                 // TCP não fecha: sem nada por 12 s, consideramos a moto desligada.
                 s.soTimeout = 12_000
@@ -425,6 +583,9 @@ class DashLink private constructor(ctx: Context) {
                     val j = runCatching { JSONObject(p.text()) }.getOrDefault(JSONObject())
                     if (j.has("night")) br.com.motonav.NightMode.fromPanel(j.optBoolean("night") || j.optInt("night", 0) == 1)
                 }
+                // painéis novos: a hora (resposta vazia zera o relógio da moto)
+                bleMode && c == 0x00010450 -> Pxc.write(out, c + 1, timeJson())
+                bleMode && c == 0x00010600 -> Pxc.write(out, c + 1, timeSyncReply(p.payload))
                 // Comandos que o Carbit respondeu com sucesso no log (rst 0x0)
                 c == Pxc.CMD_KEEPALIVE || c == Pxc.CMD_CHECK_SN || c == 0x00010450 ||
                     c == 0x00010040 || c == 0x000104A0 || c == 0x00010430 || c == 0x00010630 ->
@@ -450,7 +611,8 @@ class DashLink private constructor(ctx: Context) {
             .put("enableAOAHid", false)
             .put("mode", 2)
             .toString().toByteArray()
-        thread(name = "dash-p2c-send") {
+        // Painéis novos: o ZC-Panel (que funciona neles) não manda o 0x20020, só o sinal de vida.
+        if (!bleMode) thread(name = "dash-p2c-send") {
             try {
                 while (running.get() && !s.isClosed) {
                     Pxc.write(out, Pxc.CMD_P2C_DISPLAY, display)
@@ -513,5 +675,6 @@ class DashLink private constructor(ctx: Context) {
             .put("bluetoothName", btName)
             .put("supportH264IFrame", true)
             .put("supportFunction", hu.optInt("supportFunction", 0))
+            .apply { if (bleMode) put("supportSyncCorrectTime", false) } // senão alguns painéis zeram o relógio
     }
 }

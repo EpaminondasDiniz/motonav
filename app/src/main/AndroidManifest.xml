@@ -17,6 +17,12 @@
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="33" />
     <uses-feature android:name="android.hardware.wifi.direct" android:required="false" />
+    <!-- painéis novos (2025+): Bluetooth LE para combinar a rede com o painel -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" tools:targetApi="31" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" tools:targetApi="31" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <!-- Manter a conexão com a tela do celular apagada -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

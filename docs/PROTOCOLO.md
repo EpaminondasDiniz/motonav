@@ -20,6 +20,27 @@ Os identificadores abaixo são **exemplos fictícios**.
    `{"phoneType":"Android","packageName":"<seu pacote>"}`. Resposta: `0x70000011 {"status":true}`.
 5. O painel conecta **duas vezes** na 10922 (C2P e depois P2C), depois na 10921 e por fim na 10920.
 
+### 1b. Painéis novos (2025 em diante): Bluetooth + hotspot do celular
+
+Os painéis mais novos mostram **um QR só**, com o texto `ID:CARBIT` + 12 caracteres embaixo. O link
+traz `action=128` (bit `0x80`: o celular cria a rede) e `bm=` (endereço Bluetooth), sem `mac=`. O app
+reconhece sozinho qual dos dois tipos é. Sequência (aprendida com o projeto aberto
+[ZC-Panel](https://github.com/luan441-s/ZC-Panel), que funciona na Zontes 350R 2026; código próprio):
+
+1. Busca BLE: nome `EC` + 8 caracteres (os 4 últimos bytes do endereço), serviço
+   `0000b360-d6d8-c7ec-bdf0-eab1bfc6bcbc`, característica `…b362…` (escrita + notificação), MTU 247.
+2. Quadros **EC-BTP**: `0x24 | CMD | LEN | payload | XOR | 0x0A`, com `LEN = payload + 4` e
+   `XOR = 0x24 ^ CMD ^ LEN ^ payload`.
+3. `0x30` CLIENT_INFO `{"phoneType":0,"phoneID":"…"}` e depois `0x50` BUILD_NET, repetido a cada 1 s
+   enquanto o painel responder `status:-1`. `status:2` = "o celular cria a rede".
+4. O celular cria um **LocalOnlyHotspot** (rede local, sem compartilhar a internet) e manda `0x52`
+   `{"ssid","pwd","auth":"WPA2","mac":"","ip":"<IP do celular>"}`. O painel entra e responde `0x53`
+   com o IP dele; o celular fecha com `0x51`. `0x01`/`0x55` são pedidos de hora.
+5. Daí em diante, igual ao item 1 a partir do passo 3, com o IP do painel no hotspot. Diferenças vistas
+   no ZC-Panel: o celular manda sinal de vida `0x70000000` a cada 2 s nas conexões 10922, responde a
+   hora no `0x10450`, o `RLY_CONFIG` tem 9 bytes (+ byte do protocolo estendido), `0x60` → `0x61` com
+   o estado da tela, e cada quadro vai como `[int 4+tamanho][int índice][AUD + SPS/PPS + quadro]`.
+
 ## 2. Enquadramento PXC (portas 10930 e 10922)
 
 Cabeçalho de 16 bytes, **little-endian**: `[int cmd][int tamanhoTotal][int cmd^tamanhoTotal][int 0]`

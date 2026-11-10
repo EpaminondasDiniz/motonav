@@ -12,6 +12,12 @@ Testado em: **Zontes T350X** (painel `ZHKJ08-1122`, 800×480) com um Samsung Gal
 Outros painéis que usam o mesmo app de espelhamento talvez funcionem. Se testar o seu, abra uma issue
 contando como foi.
 
+**Painéis de 2025 em diante** (um QR só, com `ID:CARBIT…` embaixo) conectam de outro jeito: pelo
+Bluetooth, com o painel entrando num hotspot criado pelo celular. Desde a v1.1 o app reconhece o QR e
+escolhe o caminho sozinho. Esse modo foi feito com base no projeto aberto
+[ZC-Panel](https://github.com/luan441-s/ZC-Panel) e **ainda está em teste**: se tiver uma moto dessas,
+use **Enviar relatório** e conte como foi.
+
 **[⬇ Baixar o app](https://github.com/EpaminondasDiniz/motonav/releases/latest/download/MotoNav.apk)** ·
 **[📄 Guia de instalação (PDF)](docs/Guia-MotoNav.pdf)** ·
 **[☕ Apoie o projeto (Pix)](#-apoie-o-projeto)**
@@ -64,10 +70,13 @@ Passo a passo completo: [guia em PDF](docs/Guia-MotoNav.pdf) (para mandar no gru
 ## Como usar
 
 1. **Force a parada do app Carbit Ride** (senão ele conecta primeiro).
-2. No app: **Início → 🏍 Moto → Diagnóstico e pareamento → QR** e leia o QR code do painel da moto
-   (o que tem `mac=` no link). Isso é feito uma vez só.
+2. No app: **Início → 🏍 Moto → Diagnóstico e pareamento → QR** e leia o QR code do painel da moto.
+   Painel antigo (dois QR): o certo é o que tem o endereço do painel. Painel novo (um QR só): esse
+   mesmo. Isso é feito uma vez só.
 3. Ligue a moto e toque em **Conectar**. Depois disso o app conecta sozinho ao ser aberto.
-4. O Wi-Fi do celular precisa estar ligado (pode continuar conectado na rede de casa).
+4. Painel antigo: o Wi-Fi do celular precisa estar ligado (pode continuar na rede de casa). Painel
+   novo: o Bluetooth precisa estar ligado; o celular cria um hotspot só para o painel, e a internet
+   do app passa a vir dos dados móveis enquanto isso.
 
 Para funcionar com a tela apagada, deixe o app com bateria **"Sem restrições"** e não use a Economia
 de energia: em alguns aparelhos ela desliga o GPS com a tela apagada.
@@ -84,8 +93,12 @@ de energia: em alguns aparelhos ela desliga o GPS com a tela apagada.
   do painel e do celular, as configurações do app e o registro de funcionamento. Antes de sair do
   celular, o registro passa por um filtro que tira MAC, identificador e número de série do painel,
   senhas, ruas, destinos e músicas.
-- **Lista de compatíveis**: na primeira conexão com cada painel, o app avisa quem mantém o projeto
-  qual moto conectou (apelido, moto, modelo do painel e do celular). Dá para desligar em Ajustes.
+- **Diagnóstico de conexão** (desde a v1.1): quando uma conexão com o painel dá certo ou dá erro, o
+  app manda sozinho para quem mantém o projeto o apelido, a moto e o ano, o modelo do painel e do
+  celular, em que passo parou e o registro da conexão, com o mesmo filtro dos relatórios. Vai no
+  máximo um "deu certo" a cada 6 h e um erro a cada 10 min, e nunca vai localização. Serve para
+  descobrir com quais motos o app funciona sem ninguém precisar mandar nada à mão. Dá para desligar
+  na tela Moto.
 
 ## Segurança
 
@@ -107,7 +120,9 @@ Mapas © colaboradores do [OpenStreetMap](https://www.openstreetmap.org/copyrigh
 [OpenFreeMap](https://openfreemap.org), renderização [MapLibre](https://maplibre.org), rotas
 [Valhalla (FOSSGIS)](https://valhalla1.openstreetmap.de) e [OSRM](https://project-osrm.org), radares
 e limites via [Overpass API](https://overpass-api.de), clima [Open-Meteo](https://open-meteo.com),
-trânsito [TomTom](https://developer.tomtom.com) (opcional, com chave própria).
+trânsito [TomTom](https://developer.tomtom.com) (opcional, com chave própria). A conexão com os
+painéis novos (Bluetooth + hotspot) foi feita estudando o [ZC-Panel](https://github.com/luan441-s/ZC-Panel)
+(AGPL-3.0); o código do MotoNav foi escrito à parte, sem copiar o dele.
 
 Os servidores públicos são para uso justo: este app é para uso pessoal, não para uso comercial em massa.
 

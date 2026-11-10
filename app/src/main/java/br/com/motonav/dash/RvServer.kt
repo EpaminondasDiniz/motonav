@@ -32,8 +32,20 @@ class RvServer(private val ctx: Context) {
         const val RLY_DATA_START = 0x71
         const val REQ_DATA_NEXT = 0x72
         const val RLY_UN_SUPPORT = 0x7F02
+        const val REQ_SCREEN_CONF = 0x60
+        const val RLY_SCREEN_CONF = 0x61
+        private val VIEW_STATE = "{\"viewAreaConfig\":{\"state\":0},\"supportFunction\":0}".toByteArray()
+        private val AUD = byteArrayOf(0, 0, 0, 1, 9, 0xF0.toByte())
         const val MAX_BITRATE = 3_000_000
     }
+
+    /**
+     * Painéis novos (Bluetooth + hotspot), no formato que o ZC-Panel usa na 350R 2026:
+     * RLY_CONFIG com 9 bytes (+ byte do protocolo estendido), 0x60 → 0x61 com o estado da tela e
+     * cada quadro como [int 4+tamanho][int índice][AUD + (SPS/PPS +) quadro], em pedaços de 4 KB.
+     */
+    @Volatile var extended = false
+    @Volatile private var extByte = 1
 
     @Volatile private var width = 800
     @Volatile private var height = 480
@@ -51,14 +63,19 @@ class RvServer(private val ctx: Context) {
             when (cmd) {
                 REQ_CONFIG -> {
                     parseConfig(body)
-                    val reply = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+                    val reply = ByteBuffer.allocate(if (extended) 9 else 8).order(ByteOrder.LITTLE_ENDIAN)
                         .putInt(2) // 2 = H.264
                         .putShort(width.toShort())
                         .putShort(height.toShort())
+                        .apply { if (extended) put(extByte.toByte()) }
                         .array()
                     writeCmd(out, RLY_CONFIG, reply)
-                    DashLog.d("RV -> config aceita: H.264 ${width}x$height")
+                    DashLog.d("RV -> config aceita: H.264 ${width}x$height" + if (extended) " (estendido $extByte)" else "")
                 }
+                REQ_SCREEN_CONF -> if (extended) {
+                    writeCmd(out, RLY_SCREEN_CONF, VIEW_STATE)
+                    DashLog.d("RV <- estado da tela (${body.size} bytes): ${Pxc.preview(body, 200)}")
+                } else writeCmd(out, RLY_UN_SUPPORT)
                 REQ_HEARTBEAT -> writeCmd(out, RLY_HEARTBEAT)
                 REQ_DATA_START -> {
                     startEncoder()
@@ -85,7 +102,14 @@ class RvServer(private val ctx: Context) {
         // O painel pede 4 Mbps, mas no modo captura (mapa andando) ele chegou a fechar o vídeo
         // recebendo ~500 KB/s. Limitamos a 3 Mbps para aliviar o Wi-Fi Direct e o decodificador.
         if (br > 0) bitRate = minOf(br, MAX_BITRATE)
-        DashLog.d("RV <- config: ${width}x$height fps=$fps encoder=$enc codec=$codec bitrate=$br")
+        if (extended) {
+            // o codificador trabalha em blocos de 16 pixels
+            if (width and 0xFFF0 >= 16) width = width and 0xFFF0
+            if (height and 0xFFF0 >= 16) height = height and 0xFFF0
+            extByte = if (body.size >= 30) body[29].toInt() and 0xFF else 1
+        }
+        DashLog.d("RV <- config: ${width}x$height fps=$fps encoder=$enc codec=$codec bitrate=$br" +
+            if (body.size >= 30) " flags=" + body.copyOfRange(24, 32).joinToString(" ") { "%02X".format(it) } else "")
         Compat.onScreen(ctx, width, height)
     }
 
@@ -101,6 +125,7 @@ class RvServer(private val ctx: Context) {
         var bytes = 0L
         var lastReport = System.currentTimeMillis()
         val zero = ByteArray(4)
+        var index = 0
         val lenBuf = ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN)
 
         while (true) {
@@ -115,6 +140,28 @@ class RvServer(private val ctx: Context) {
             if (frame == null) {
                 out.write(zero)
                 out.flush()
+                continue
+            }
+            if (extended) {
+                if (frame.key) waitingKey = false
+                val cfg = if (frame.key && !hasSps(frame.data)) enc.config ?: ByteArray(0) else ByteArray(0)
+                val au = AUD + cfg + frame.data
+                val pkt = ByteBuffer.allocate(8 + au.size).order(ByteOrder.LITTLE_ENDIAN)
+                    .putInt(4 + au.size).putInt(index).put(au).array()
+                index = (index + 1) and 0x7FFFFFFF
+                var off = 0
+                while (off < pkt.size) { // pedaços de 4 KB, como o ZC-Panel
+                    val end = minOf(off + 4096, pkt.size)
+                    out.write(pkt, off, end - off); out.flush()
+                    off = end
+                    if (off < pkt.size) Thread.sleep(2)
+                }
+                sent++; bytes += pkt.size
+                val now = System.currentTimeMillis()
+                if (now - lastReport > 5000) {
+                    DashLog.d("RV -> $sent quadros enviados (${bytes / 1024} KB) nos últimos 5 s")
+                    sent = 0; bytes = 0; lastReport = now
+                }
                 continue
             }
             if (frame.key) {
@@ -164,6 +211,18 @@ class RvServer(private val ctx: Context) {
         source = null
         encoder?.stop()
         encoder = null
+    }
+
+    /** O quadro já traz SPS (NAL 7)? */
+    private fun hasSps(au: ByteArray): Boolean {
+        var i = 0
+        while (i + 3 < au.size && i < 64) {
+            if (au[i] == 0.toByte() && au[i + 1] == 0.toByte() && au[i + 2] == 1.toByte()) {
+                if ((au[i + 3].toInt() and 0x1F) == 7) return true
+                i += 3
+            } else i++
+        }
+        return false
     }
 
     private fun readCmd(input: InputStream): Pair<Int, ByteArray> {
