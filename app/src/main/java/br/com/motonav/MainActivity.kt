@@ -430,6 +430,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
         rider.setText(DashScreen.riderName)
+        val bike = v.findViewById<EditText>(R.id.sheetBike)
+        bike.setText(DashScreen.bikeModel)
+        v.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.sheetCompat).apply {
+            isChecked = Compat.enabled(this@MainActivity)
+            visibility = if (Report.canSend) View.VISIBLE else View.GONE
+            setOnCheckedChangeListener { _, on -> Compat.setEnabled(this@MainActivity, on) }
+        }
         intro.isChecked = DashScreen.introEnabled
         intro.setOnCheckedChangeListener { _, on -> DashScreen.setIntro(this, on) }
         v.findViewById<Button>(R.id.sheetPreview).setOnClickListener {
@@ -544,6 +551,7 @@ class MainActivity : AppCompatActivity() {
             setContentView(v)
             setOnDismissListener {
                 DashScreen.setRider(this@MainActivity, rider.text.toString())
+                DashScreen.setBike(this@MainActivity, bike.text.toString())
                 sheetRefresh = null
                 motoSheet = null
             }

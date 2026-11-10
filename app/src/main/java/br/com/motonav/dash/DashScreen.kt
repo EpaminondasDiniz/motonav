@@ -17,6 +17,14 @@ object DashScreen {
         private set
     @Volatile var introEnabled = true
         private set
+    /** Modelo da moto, digitado pela pessoa (vai nos relatórios e no aviso de compatibilidade). */
+    @Volatile var bikeModel = ""
+        private set
+
+    fun setBike(ctx: Context, model: String) {
+        bikeModel = model.trim().take(40)
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("bike", bikeModel).apply()
+    }
     /** Estilo do painel Race (Neon, Clássico, Retrô, Caça, Telemetria). */
     @Volatile var raceStyle = RaceStyle.NEON
         private set
@@ -33,6 +41,7 @@ object DashScreen {
         mode = runCatching { Mode.valueOf(p.getString("mode", Mode.MAP.name) ?: "") }.getOrDefault(Mode.MAP)
         riderName = p.getString("rider", "") ?: ""
         introEnabled = p.getBoolean("intro", true)
+        bikeModel = p.getString("bike", "") ?: ""
     }
 
     fun set(ctx: Context, m: Mode) {

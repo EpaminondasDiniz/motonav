@@ -76,6 +76,20 @@ de energia: em alguns aparelhos ela desliga o GPS com a tela apagada.
 - O acesso a notificações serve só para ler a música tocando e o nome de quem mandou mensagem. O texto
   das mensagens nunca é lido nem mostrado.
 - O SMS de emergência só é enviado pela detecção de queda, para o contato que você escolher.
+- **Relatórios** (só quando você toca em "Enviar relatório"): seu nome ou apelido, a moto, o modelo
+  do painel e do celular, as configurações do app e o registro de funcionamento. Antes de sair do
+  celular, o registro passa por um filtro que tira MAC, identificador e número de série do painel,
+  senhas, ruas, destinos e músicas.
+- **Lista de compatíveis**: na primeira conexão com cada painel, o app avisa quem mantém o projeto
+  qual moto conectou (apelido, moto, modelo do painel e do celular). Dá para desligar em Ajustes.
+
+## Segurança
+
+- O app abre portas de rede para o painel conectar, mas só aceita conexões do painel, pelo
+  Wi-Fi Direct: alguém no mesmo Wi-Fi que você não consegue pegar o vídeo do mapa nem mandar
+  comandos.
+- A atualização só abre links do próprio GitHub. Releases são assinadas sempre com a mesma chave.
+- Achou um problema de segurança? Abra uma issue sem detalhes e peça um contato privado.
 
 ## Como funciona
 

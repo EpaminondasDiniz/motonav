@@ -46,7 +46,15 @@ object Updater {
             val a = assets.getJSONObject(i)
             if (a.optString("name").endsWith(".apk", true)) { apk = a.optString("browser_download_url"); break }
         }
-        return Release(version, json.optString("body").trim(), apk, json.optString("html_url"))
+        val page = json.optString("html_url").takeIf { trusted(it) } ?: "https://github.com/${BuildConfig.UPDATE_REPO}/releases/latest"
+        return Release(version, json.optString("body").trim(), apk?.takeIf { trusted(it) }, page)
+    }
+
+    /** Só abre links https do GitHub (nunca um endereço qualquer vindo da resposta). */
+    private fun trusted(url: String): Boolean {
+        val u = runCatching { android.net.Uri.parse(url) }.getOrNull() ?: return false
+        val host = u.host?.lowercase() ?: return false
+        return u.scheme == "https" && (host == "github.com" || host.endsWith(".github.com") || host.endsWith(".githubusercontent.com"))
     }
 
     fun skip(ctx: Context, version: String) {

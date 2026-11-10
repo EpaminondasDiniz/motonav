@@ -45,7 +45,9 @@ object Pxc {
         val cmd = bb.getInt(0)
         val len = bb.getInt(4)
         val magic = bb.getInt(8)
-        if ((cmd xor len) != magic || len < 16 || len > 16 * 1024 * 1024) throw MagicException(header)
+        // limite de 1 MB: o maior pacote real tem poucos KB; mais que isso só serviria para
+        // esgotar a memória do app
+        if ((cmd xor len) != magic || len < 16 || len > 1024 * 1024) throw MagicException(header)
         val payload = ByteArray(len - 16)
         if (payload.isNotEmpty()) readFully(input, payload)
         return Packet(cmd, payload)

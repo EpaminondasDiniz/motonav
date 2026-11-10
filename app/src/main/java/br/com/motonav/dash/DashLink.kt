@@ -119,6 +119,7 @@ class DashLink private constructor(ctx: Context) {
     fun stop() {
         if (!running.getAndSet(false)) return
         main.removeCallbacksAndMessages(null)
+        panelAddr = null
         synchronized(sockets) { sockets.forEach { runCatching { it.close() } }; sockets.clear() }
         rv.stop()
         DashService.stop(app)
@@ -216,6 +217,7 @@ class DashLink private constructor(ctx: Context) {
             sessionGen++
             connecting.set(true)
             val go = info.groupOwnerAddress
+            panelAddr = go // só esse endereço pode conectar nas portas 10920-10922
             state("Wi-Fi Direct conectado. Painel em ${go.hostAddress}")
             thread(name = "dash-wakeup") { sendWakeup(go) }
         } else if (fromStart) {
@@ -232,6 +234,7 @@ class DashLink private constructor(ctx: Context) {
     private fun onSessionLost() {
         if (!running.get() || !sessionStarted.getAndSet(false)) return
         connecting.set(false)
+        panelAddr = null
         searchUntil = SystemClock.elapsedRealtime() + SEARCH_AFTER_LOST_MS
         state("Conexão com o painel caiu. Procurando de novo por ${SEARCH_AFTER_LOST_MS / 60_000} min...")
         rv.stop()
@@ -298,6 +301,7 @@ class DashLink private constructor(ctx: Context) {
             videoConns.incrementAndGet()
             try {
                 state("Painel pediu o vídeo (10920). Enviando o mapa...")
+                br.com.motonav.Compat.onConnected(app) // 1ª vez com este painel: avisa a lista de compatíveis
                 rv.handleData(s)
             } finally {
                 if (videoConns.decrementAndGet() == 0) watchVideo()
@@ -322,6 +326,18 @@ class DashLink private constructor(ctx: Context) {
         }, 60_000)
     }
 
+    /** Endereço do painel na sessão atual (dono do grupo Wi-Fi Direct); null = ninguém pode conectar. */
+    @Volatile private var panelAddr: InetAddress? = null
+
+    /** A conexão veio do painel, pela interface do Wi-Fi Direct? */
+    private fun fromPanel(s: Socket): Boolean {
+        val expected = panelAddr ?: return false
+        if (s.inetAddress != expected) return false
+        // chegou pela interface p2p (se o aparelho não tiver uma com nome "p2p", vale só o endereço)
+        val local = localP2pAddress() ?: return true
+        return s.localAddress == local
+    }
+
     private fun listen(port: Int, handler: (Socket) -> Unit) {
         thread(name = "dash-srv-$port") {
             try {
@@ -333,6 +349,14 @@ class DashLink private constructor(ctx: Context) {
                 DashLog.d("ouvindo na porta $port")
                 while (running.get()) {
                     val s = ss.accept()
+                    // Segurança: o servidor escuta em todas as redes, mas só o painel (pelo Wi-Fi
+                    // Direct) pode conversar. Sem isso, alguém no mesmo Wi-Fi do celular poderia
+                    // pedir o vídeo do mapa (a localização ao vivo) ou mandar comandos falsos.
+                    if (!fromPanel(s)) {
+                        DashLog.d("porta $port: conexão recusada de ${s.inetAddress.hostAddress} (não é o painel)")
+                        runCatching { s.close() }
+                        continue
+                    }
                     sockets.add(s)
                     s.tcpNoDelay = true
                     DashLog.d("porta $port <- conexão de ${s.inetAddress.hostAddress}:${s.port}")
@@ -374,12 +398,14 @@ class DashLink private constructor(ctx: Context) {
         while (running.get()) {
             val p = Pxc.read(input)
             val c = p.cmd
-            DashLog.d("C2P <- ${Pxc.hex(c)} ${Pxc.preview(p.payload)}")
+            // 0x104A0 traz uma conta de atualização do fabricante: não vai para o log (nem para relatórios)
+            DashLog.d("C2P <- ${Pxc.hex(c)} " + if (c == 0x000104A0) "(dados de atualização do fabricante, ocultos)" else Pxc.preview(p.payload))
             if (c % 2 != 0) continue // o Carbit descarta comandos ímpares
             when {
                 c == Pxc.CMD_CLIENT_INFO -> {
                     val hu = runCatching { JSONObject(p.text()) }.getOrDefault(JSONObject())
                     huid = hu.optString("HUID", "")
+                    br.com.motonav.Compat.onPanelInfo(app, hu.optString("HUName"), hu.optString("channel"), huid)
                     val reply = clientInfoReply(hu)
                     Pxc.write(out, c + 1, reply.toString().toByteArray())
                     DashLog.d("C2P -> CLIENT_INFO respondido como ${app.packageName}")

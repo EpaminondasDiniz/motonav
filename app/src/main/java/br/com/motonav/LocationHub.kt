@@ -49,6 +49,7 @@ object LocationHub {
     /** Dados guardados no celular que o GPS alimenta (pode ser chamado mais de uma vez). */
     fun initData(ctx: Context) {
         TomTom.loadKey(ctx)
+        Compat.load(ctx)
         Garage.init(ctx)
         TripLog.init(ctx)
         SpeedLimits.init(ctx)

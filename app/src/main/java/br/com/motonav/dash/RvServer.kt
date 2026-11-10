@@ -1,6 +1,7 @@
 package br.com.motonav.dash
 
 import android.content.Context
+import br.com.motonav.Compat
 import java.io.BufferedOutputStream
 import java.io.IOException
 import java.io.InputStream
@@ -85,6 +86,7 @@ class RvServer(private val ctx: Context) {
         // recebendo ~500 KB/s. Limitamos a 3 Mbps para aliviar o Wi-Fi Direct e o decodificador.
         if (br > 0) bitRate = minOf(br, MAX_BITRATE)
         DashLog.d("RV <- config: ${width}x$height fps=$fps encoder=$enc codec=$codec bitrate=$br")
+        Compat.onScreen(ctx, width, height)
     }
 
     // ------------------------------------------------------------- dados 10920

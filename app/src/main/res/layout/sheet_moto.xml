@@ -68,6 +68,16 @@
             android:maxLength="16"
             android:maxLines="1" />
 
+        <EditText
+            android:id="@+id/sheetBike"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Sua moto (ex.: Zontes T350X)"
+            android:importantForAutofill="no"
+            android:inputType="textCapWords"
+            android:maxLength="40"
+            android:maxLines="1" />
+
         <com.google.android.material.materialswitch.MaterialSwitch
             android:id="@+id/sheetIntro"
             android:layout_width="match_parent"
@@ -315,6 +325,13 @@
             android:alpha="0.6"
             android:textSize="12sp"
             android:textStyle="bold" />
+
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/sheetCompat"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Avisar o suporte qual moto conectou (1ª vez com cada painel)" />
 
         <Button
             android:id="@+id/sheetReport"

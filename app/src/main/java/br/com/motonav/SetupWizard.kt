@@ -59,6 +59,7 @@ class SetupWizard(
     private val steps = 6
     private val ticker = Handler(Looper.getMainLooper())
     private var nameField: EditText? = null
+    private var bikeField: EditText? = null
 
     val showing: Boolean get() = host.visibility == View.VISIBLE
 
@@ -91,6 +92,7 @@ class SetupWizard(
 
     private fun saveName() {
         nameField?.text?.toString()?.trim()?.let { if (it.isNotEmpty()) DashScreen.setRider(act, it) }
+        bikeField?.text?.toString()?.trim()?.let { if (it.isNotEmpty()) DashScreen.setBike(act, it) }
     }
 
     // ------------------------------------------------------------------ desenho
@@ -154,12 +156,25 @@ class SetupWizard(
             maxLines = 1
         }
         b.addView(nameField)
+        b.addView(gap(12))
+        b.addView(text("Qual é a sua moto?", 14f, dim))
+        bikeField = EditText(act).apply {
+            hint = "Ex.: Zontes T350X"
+            setText(DashScreen.bikeModel)
+            setTextColor(Color.WHITE); setHintTextColor(Color.rgb(100, 104, 116))
+            inputType = android.text.InputType.TYPE_TEXT_FLAG_CAP_WORDS
+            maxLines = 1
+        }
+        b.addView(bikeField)
         b.addView(gap(16))
         b.addView(card(
             "⚠ Antes de usar",
             "• Não mexa no celular pilotando. Configure tudo parado.\n" +
                 "• Navegação, radares e limites vêm de mapas abertos e podem estar errados: respeite a sinalização.\n" +
                 "• A detecção de queda é uma ajuda e pode falhar; não substitui cuidado nem socorro.\n" +
+                "• Na primeira conexão com o painel, o app avisa quem mantém o projeto qual moto e qual painel conectaram " +
+                "(seu nome ou apelido, a moto, o modelo do painel e do celular), para saber com quais motos ele funciona. " +
+                "Não vai localização. Dá para desligar em Ajustes.\n" +
                 "• Projeto independente e gratuito, sem vínculo com a fabricante da moto nem com a Carbit. Uso por sua conta e risco.",
             orange))
     }
