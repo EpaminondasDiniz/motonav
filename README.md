@@ -12,6 +12,10 @@ Testado em: **Zontes T350X** (painel `ZHKJ08-1122`, 800×480) com um Samsung Gal
 Outros painéis que usam o mesmo app de espelhamento talvez funcionem. Se testar o seu, abra uma issue
 contando como foi.
 
+**[⬇ Baixar o app](https://github.com/EpaminondasDiniz/motonav/releases/latest/download/MotoNav.apk)** ·
+**[📄 Guia de instalação (PDF)](docs/Guia-MotoNav.pdf)** ·
+**[☕ Apoie o projeto (Pix)](#-apoie-o-projeto)**
+
 ## O que faz
 
 **No painel da moto**
@@ -106,6 +110,27 @@ e limites via [Overpass API](https://overpass-api.de), clima [Open-Meteo](https:
 trânsito [TomTom](https://developer.tomtom.com) (opcional, com chave própria).
 
 Os servidores públicos são para uso justo: este app é para uso pessoal, não para uso comercial em massa.
+
+## ☕ Apoie o projeto
+
+O MotoNav é grátis, sem anúncios e vai continuar assim. Se ele te ajudou, um Pix de qualquer valor
+ajuda a **pagar o Claude** 😄 (a IA que ajudou a programar o app) e as horas de teste na moto.
+
+<img src="docs/pix-qr.png" alt="QR code do Pix" width="200">
+
+**Chave Pix aleatória:**
+
+```
+be6da435-ad70-4bfe-961f-57ce146c6ec5
+```
+
+**Pix copia e cola** (no app do banco: Pix → Pagar → Pix copia e cola):
+
+```
+00020126580014br.gov.bcb.pix0136be6da435-ad70-4bfe-961f-57ce146c6ec55204000053039865802BR5907MOTONAV6006BRASIL62070503***6304CA37
+```
+
+Doar é totalmente opcional. Valeu! 🏍
 
 ## Licença
 
