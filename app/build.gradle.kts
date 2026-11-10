@@ -26,6 +26,7 @@ android {
         applicationId = "br.com.motonav"
         minSdk = 29
         targetSdk = 37
+        // A cada versão publicada: aumentar versionCode (+1) e versionName (a tag do GitHub é "v" + versionName).
         versionCode = 1
         versionName = "1.0"
 
@@ -33,17 +34,36 @@ android {
         buildConfigField("String", "TOMTOM_KEY", "\"$tomtomKey\"")
         buildConfigField("boolean", "TOMTOM_ROUTING", "$tomtomRouting")
         buildConfigField("boolean", "TOMTOM_INCIDENTS", "$tomtomIncidents")
+        // Repositório do GitHub onde o app procura versões novas ("dono/nome"; vazio = não procura).
+        buildConfigField("String", "UPDATE_REPO", "\"${localProps.getProperty("UPDATE_REPO", "EpaminondasDiniz/motonav")}\"")
     }
 
     buildFeatures {
         buildConfig = true
     }
 
+    // Assinatura do APK de distribuição: a chave fica fora do projeto e os dados no local.properties
+    // (RELEASE_STORE_FILE, RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD).
+    // Guarde uma cópia da chave: sem ela, as próximas versões não instalam por cima.
+    val storeFilePath = localProps.getProperty("RELEASE_STORE_FILE", "")
+    if (storeFilePath.isNotBlank()) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(storeFilePath)
+                storePassword = localProps.getProperty("RELEASE_STORE_PASSWORD", "")
+                keyAlias = localProps.getProperty("RELEASE_KEY_ALIAS", "")
+                keyPassword = localProps.getProperty("RELEASE_KEY_PASSWORD", "")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (storeFilePath.isNotBlank()) signingConfig = signingConfigs.getByName("release")
+            // Otimização (R8) desligada: com ela, o APK fechava ao abrir (IllegalAccessError numa
+            // classe do kotlin.text reescrita pelo R8 e usada pelo nosso código). Testado em 09/11/2026.
             optimization {
-                enable = true
-                packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
+                enable = false
             }
         }
     }

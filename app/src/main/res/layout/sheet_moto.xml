@@ -306,6 +306,40 @@
             android:layout_marginTop="16dp"
             android:text="🗝 Chave TomTom (trânsito e incidentes)" />
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="AJUDA"
+            android:letterSpacing="0.15"
+            android:alpha="0.6"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/sheetReport"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="📤 Enviar relatório (quando algo não funcionar)" />
+
+        <Button
+            android:id="@+id/sheetWizard"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="🧭 Assistente de configuração" />
+
+        <Button
+            android:id="@+id/sheetUpdate"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="🔄 Procurar atualização" />
+
         <Button
             android:id="@+id/sheetDiag"
             style="@style/Widget.Material3.Button.TextButton"

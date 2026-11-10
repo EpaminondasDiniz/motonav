@@ -31,6 +31,14 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
+    <!-- Assistente: pedir direto para liberar a bateria (sem o usuário procurar nas configurações) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Assistente e relatório: saber se o Carbit Ride está instalado (ele conecta no painel primeiro) -->
+    <queries>
+        <package android:name="net.easyconn.easyride.wws" />
+    </queries>
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"

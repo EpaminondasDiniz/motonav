@@ -270,4 +270,14 @@
     <include layout="@layout/view_race" />
     <include layout="@layout/view_maint" />
     <include layout="@layout/view_home" />
+
+    <!-- Assistente de primeiro uso (preenchido pelo SetupWizard) -->
+    <FrameLayout
+        android:id="@+id/setupScreen"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#0B0B0F"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone" />
 </FrameLayout>

@@ -107,6 +107,76 @@ class MainActivity : AppCompatActivity() {
         else setStatus("Sem permissão de localização: a rota precisa do GPS.")
     }
 
+    /** Permissões pedidas pelo assistente (localização, Wi-Fi próximos, notificações) de uma vez. */
+    private val wizardPermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { _ ->
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            enableLocation()
+        }
+        if (::wizard.isInitialized) wizard.refresh()
+    }
+
+    private lateinit var wizard: SetupWizard
+
+    private fun setupWizard() {
+        wizard = SetupWizard(this, findViewById(R.id.setupScreen), object : SetupWizard.Actions {
+            override fun requestPermissions() {
+                val list = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+                if (Build.VERSION.SDK_INT >= 33) {
+                    list.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+                    list.add(Manifest.permission.POST_NOTIFICATIONS)
+                }
+                wizardPermLauncher.launch(list.toTypedArray())
+            }
+            override fun scanQr() = this@MainActivity.scanQr()
+            override fun connect() = connectDash()
+            override fun connectionText(): String = dashStatus.title
+            override fun connected(): Boolean = dashStatus == DashStatus.ONLINE
+            override fun finished() { showScreen(Screen.HOME); checkUpdates(force = false) }
+        })
+        // primeira vez: assistente. Quem já tem painel pareado (já usava o app) não precisa.
+        if (!SetupWizard.isDone(this)) {
+            if (DashPairing.load(this) != null) SetupWizard.markDone(this) else wizard.show()
+        }
+    }
+
+    // ---------- Atualização e relatório ----------
+
+    /** Procura versão nova no GitHub (1x por dia, ou na hora com [force]). */
+    private fun checkUpdates(force: Boolean) {
+        if (!Updater.enabled) { if (force) toast("Esta versão não procura atualizações"); return }
+        if (force) toast("Procurando atualização…")
+        io.execute {
+            val r = runCatching { Updater.check(this, force) }.getOrNull()
+            runOnUiThread {
+                if (r == null) { if (force) toast("Você já está na versão mais nova (${BuildConfig.VERSION_NAME})"); return@runOnUiThread }
+                AlertDialog.Builder(this)
+                    .setTitle("Versão nova: ${r.version}")
+                    .setMessage((r.notes.ifBlank { "Correções e melhorias." }).take(1200) +
+                        "\n\nVocê está na ${BuildConfig.VERSION_NAME}. Ao baixar, abra o arquivo e toque em Instalar (os seus dados continuam).")
+                    .setPositiveButton("Baixar") { _, _ ->
+                        runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(r.apkUrl ?: r.pageUrl))) }
+                    }
+                    .setNeutralButton("Pular esta") { _, _ -> Updater.skip(this, r.version) }
+                    .setNegativeButton("Depois", null)
+                    .show()
+            }
+        }
+    }
+
+    /** Relatório (aparelho, permissões, bateria e log) para mandar pelo WhatsApp a quem dá suporte. */
+    private fun sendReport() {
+        val f = runCatching { Report.writeFile(this) }.getOrElse { toast("Falha ao gerar o relatório"); return }
+        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", f)
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND)
+            .setType("text/plain")
+            .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            .putExtra(android.content.Intent.EXTRA_TEXT, "Relatório do app de navegação (${Build.MANUFACTURER} ${Build.MODEL}, versão ${BuildConfig.VERSION_NAME})")
+            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        startActivity(android.content.Intent.createChooser(send, "Enviar relatório"))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MapLibre.getInstance(this)
@@ -156,7 +226,11 @@ class MainActivity : AppCompatActivity() {
 
         LocationHub.initData(this)
         setupDashPanel()
-        Garage.dueText()?.let { toast("🔧 $it") }
+        setupWizard()
+        if (!wizard.showing) {
+            Garage.dueText()?.let { toast("🔧 $it") }
+            checkUpdates(force = false)
+        }
         handleConnectIntent(intent)
     }
 
@@ -325,6 +399,14 @@ class MainActivity : AppCompatActivity() {
         v.findViewById<Button>(R.id.sheetDiag).setOnClickListener {
             motoSheet?.dismiss()
             toggleDiagnostics()
+        }
+
+        // ajuda: relatório, assistente, atualização
+        v.findViewById<Button>(R.id.sheetReport).setOnClickListener { motoSheet?.dismiss(); sendReport() }
+        v.findViewById<Button>(R.id.sheetWizard).setOnClickListener { motoSheet?.dismiss(); wizard.show() }
+        v.findViewById<Button>(R.id.sheetUpdate).apply {
+            text = "🔄 Procurar atualização (versão ${BuildConfig.VERSION_NAME})"
+            setOnClickListener { motoSheet?.dismiss(); checkUpdates(force = true) }
         }
 
         // chave TomTom (cada pessoa usa a sua, gratuita)
@@ -776,13 +858,17 @@ class MainActivity : AppCompatActivity() {
     private fun savePairing(raw: String) {
         val d = DashPairing.parseQr(raw)
         if (d == null) {
-            toast("QR não reconhecido (precisa ter mac=...)")
+            toast("Esse QR não é o de conexão do painel. Procure o outro QR na tela da moto.")
             DashLog.d("QR inválido: $raw")
             return
         }
         DashPairing.save(this, d)
         DashLog.d("Painel pareado: ${d.name} ${d.mac}")
+        toast("Painel ${d.name} pareado ✓")
         refreshPairedLabel()
+        dashStatus = DashStatus.OFF
+        refreshDashChip(null)
+        if (::wizard.isInitialized) wizard.refresh()
     }
 
     private fun missingDashPermissions(): List<String> {
@@ -832,6 +918,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             findViewById<View>(R.id.dashPanel).updatePadding(bottom = bars.bottom + margin / 2)
+            findViewById<View>(R.id.setupScreen).updatePadding(top = bars.top, bottom = bars.bottom)
             insets
         }
     }
@@ -842,6 +929,8 @@ class MainActivity : AppCompatActivity() {
         val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
         if (fine == PackageManager.PERMISSION_GRANTED) {
             enableLocation()
+        } else if (::wizard.isInitialized && wizard.showing) {
+            return // o assistente pede as permissões no passo 2
         } else {
             permissionLauncher.launch(arrayOf(
                 Manifest.permission.ACCESS_FINE_LOCATION,
@@ -1129,6 +1218,7 @@ class MainActivity : AppCompatActivity() {
 
     private val backToHome = object : androidx.activity.OnBackPressedCallback(false) {
         override fun handleOnBackPressed() {
+            if (::wizard.isInitialized && wizard.showing) { wizard.hide(); showScreen(Screen.HOME); return }
             if (::dashPanel.isInitialized && dashPanel.visibility == View.VISIBLE) dashPanel.visibility = View.GONE
             else showScreen(Screen.HOME)
         }
@@ -1817,7 +1907,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         mapView.onResume()
-        warnBatterySaver()
+        if (::wizard.isInitialized && wizard.showing) wizard.refresh() else warnBatterySaver()
         if (::homeView.isInitialized && screen == Screen.HOME) refreshHome()
         if (::raceScreen.isInitialized && screen == Screen.RACE) startRaceOnPhone()
         if (::maintScreen.isInitialized && screen == Screen.MAINT) refreshMaint()
