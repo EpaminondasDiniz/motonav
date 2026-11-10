@@ -60,6 +60,59 @@ object Report {
         return File(dir, name).apply { writeText(build(ctx)) }
     }
 
+    // ------------------------------------------------------------------ envio para o Discord
+
+    val canSend: Boolean get() = BuildConfig.REPORT_WEBHOOK.startsWith("https://")
+    private const val MIN_INTERVAL_MS = 2 * 60_000L
+
+    /**
+     * Manda o relatório para o canal do Discord (webhook), com nome, aparelho, versão, a descrição
+     * e o arquivo. Bloqueia: chamar fora da thread principal. No máximo 1 envio a cada 2 min.
+     * Devolve null se deu certo, ou o motivo do erro.
+     */
+    fun send(ctx: Context, name: String, what: String): String? {
+        if (!canSend) return "envio não configurado"
+        val p = ctx.getSharedPreferences("report", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (now - p.getLong("lastSent", 0L) < MIN_INTERVAL_MS) return "aguarde 2 minutos entre um relatório e outro"
+        val file = writeFile(ctx)
+        val who = name.trim().ifEmpty { "Sem nome" }.take(40)
+        val desc = what.trim().take(900)
+        val content = "📋 **Relatório de ${clean(who)}** · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} · " +
+            "v${BuildConfig.VERSION_NAME}" + (if (desc.isNotEmpty()) "\n> ${clean(desc).replace("\n", "\n> ")}" else "")
+        // sem menções: ninguém consegue mandar @everyone pelo relatório
+        val payload = org.json.JSONObject()
+            .put("username", "Relatórios do app")
+            .put("content", content.take(1990))
+            .put("allowed_mentions", org.json.JSONObject().put("parse", org.json.JSONArray()))
+        val boundary = "----motonav" + now
+        val conn = java.net.URL(BuildConfig.REPORT_WEBHOOK).openConnection() as java.net.HttpURLConnection
+        return try {
+            conn.connectTimeout = 10_000
+            conn.readTimeout = 20_000
+            conn.doOutput = true
+            conn.requestMethod = "POST"
+            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            conn.outputStream.use { out ->
+                fun w(s: String) = out.write(s.toByteArray(Charsets.UTF_8))
+                w("--$boundary\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n")
+                w(payload.toString()); w("\r\n")
+                w("--$boundary\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"${file.name}\"\r\nContent-Type: text/plain\r\n\r\n")
+                out.write(file.readBytes()); w("\r\n--$boundary--\r\n")
+            }
+            val code = conn.responseCode
+            if (code in 200..299) { p.edit().putLong("lastSent", now).apply(); DashLog.d("relatório enviado"); null }
+            else "o servidor respondeu $code"
+        } catch (e: Exception) {
+            "sem conexão (${e.message})"
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** Tira formatação do Discord que poderia bagunçar a mensagem. */
+    private fun clean(s: String) = s.replace("@", "＠").replace("`", "'")
+
     fun installed(ctx: Context, pkg: String): Boolean =
         runCatching { ctx.packageManager.getPackageInfo(pkg, 0); true }.getOrDefault(false)
 }

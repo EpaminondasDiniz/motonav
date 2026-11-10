@@ -154,7 +154,8 @@ class MainActivity : AppCompatActivity() {
                 AlertDialog.Builder(this)
                     .setTitle("Versão nova: ${r.version}")
                     .setMessage((r.notes.ifBlank { "Correções e melhorias." }).take(1200) +
-                        "\n\nVocê está na ${BuildConfig.VERSION_NAME}. Ao baixar, abra o arquivo e toque em Instalar (os seus dados continuam).")
+                        "\n\nVocê está na ${BuildConfig.VERSION_NAME}. Ao baixar, abra o arquivo e toque em Instalar " +
+                        "(os seus dados continuam). Se o Android pedir, libere \"instalar apps desconhecidos\" para o navegador.")
                     .setPositiveButton("Baixar") { _, _ ->
                         runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(r.apkUrl ?: r.pageUrl))) }
                     }
@@ -165,8 +166,49 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Relatório (aparelho, permissões, bateria e log) para mandar pelo WhatsApp a quem dá suporte. */
+    /**
+     * Relatório para suporte: com o canal configurado (Discord), pede nome e o que aconteceu e envia
+     * direto; senão (ou se falhar), compartilha o arquivo.
+     */
     private fun sendReport() {
+        if (!Report.canSend) { shareReport(); return }
+        val name = EditText(this).apply { hint = "Seu nome"; setText(DashScreen.riderName); isSingleLine = true }
+        val what = EditText(this).apply {
+            hint = "O que aconteceu? Ex.: não conecta, o mapa travou na rua tal..."
+            minLines = 3
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        }
+        val explain = TextView(this).apply {
+            alpha = 0.75f
+            setPadding(0, 0, 0, 12)
+            text = "Vai para o canal de suporte do app: seu nome, o modelo do celular, as configurações do app e o " +
+                "registro de funcionamento. Não vai localização, contatos nem mensagens."
+        }
+        AlertDialog.Builder(this)
+            .setTitle("📤 Enviar relatório")
+            .setView(formBox(explain, label("Seu nome"), name, label("O que aconteceu?"), what))
+            .setPositiveButton("Enviar") { _, _ ->
+                if (name.text.isNotBlank()) DashScreen.setRider(this, name.text.toString())
+                toast("Enviando relatório…")
+                io.execute {
+                    val err = Report.send(this, name.text.toString(), what.text.toString())
+                    runOnUiThread {
+                        if (err == null) toast("Relatório enviado ✓ Obrigado!")
+                        else AlertDialog.Builder(this)
+                            .setTitle("Não deu para enviar")
+                            .setMessage("Motivo: $err.\n\nQuer compartilhar o arquivo do relatório por outro app?")
+                            .setPositiveButton("Compartilhar") { _, _ -> shareReport() }
+                            .setNegativeButton("Agora não", null).show()
+                    }
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    /** Alternativa: compartilha o arquivo do relatório (WhatsApp, e-mail...). */
+    private fun shareReport() {
         val f = runCatching { Report.writeFile(this) }.getOrElse { toast("Falha ao gerar o relatório"); return }
         val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", f)
         val send = android.content.Intent(android.content.Intent.ACTION_SEND)

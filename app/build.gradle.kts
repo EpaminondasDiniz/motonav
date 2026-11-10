@@ -36,6 +36,9 @@ android {
         buildConfigField("boolean", "TOMTOM_INCIDENTS", "$tomtomIncidents")
         // Repositório do GitHub onde o app procura versões novas ("dono/nome"; vazio = não procura).
         buildConfigField("String", "UPDATE_REPO", "\"${localProps.getProperty("UPDATE_REPO", "EpaminondasDiniz/motonav")}\"")
+        // Webhook do Discord para onde vão os relatórios de erro (vazio = só compartilhar o arquivo).
+        // Fica no local.properties: não vai para o git, só para o APK distribuído.
+        buildConfigField("String", "REPORT_WEBHOOK", "\"${localProps.getProperty("REPORT_WEBHOOK", "")}\"")
     }
 
     buildFeatures {

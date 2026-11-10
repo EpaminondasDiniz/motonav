@@ -35,6 +35,18 @@ contando como foi.
   alarme em 30 s, manda SMS com a localização para um contato de emergência.
 - Bloco "Moto" nas configurações rápidas e atalho no ícone para conectar sem abrir o app.
 
+## Como instalar (só quero usar)
+
+1. No celular, baixe o `.apk` da versão mais nova em
+   [Releases](https://github.com/EpaminondasDiniz/motonav/releases/latest).
+2. Ao abrir o arquivo, o Android pede para liberar **"instalar apps desconhecidos"** para o app que
+   abriu o arquivo (Chrome, WhatsApp, Arquivos). Toque em **Configurações → Permitir desta fonte**.
+3. Se aparecer aviso do Play Protect, toque em **Mais detalhes → Instalar mesmo assim**. Nos
+   Samsung, desligue antes o **Bloqueador automático** (Segurança e privacidade).
+4. Abra o app e siga o assistente.
+
+Passo a passo completo, com imagens de texto: [docs/INSTALAR.md](docs/INSTALAR.md).
+
 ## Como compilar
 
 1. Android Studio recente (AGP 9 / Gradle 9), JDK 17.
