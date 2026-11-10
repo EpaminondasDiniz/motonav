@@ -4,9 +4,9 @@ O app não está na Play Store: ele é instalado por um arquivo **.apk**. Leva u
 
 ## 1. Baixe o app
 
-Abra a página de versões no celular e toque no arquivo **`MotoNav-x.y.apk`** da versão mais nova:
+No celular, toque no link abaixo (ele sempre baixa a versão mais nova):
 
-**https://github.com/EpaminondasDiniz/motonav/releases/latest**
+**https://github.com/EpaminondasDiniz/motonav/releases/latest/download/MotoNav.apk**
 
 ## 2. Libere a instalação ("fontes desconhecidas")
 

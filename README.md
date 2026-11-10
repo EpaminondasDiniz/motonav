@@ -45,7 +45,7 @@ contando como foi.
    Samsung, desligue antes o **Bloqueador automático** (Segurança e privacidade).
 4. Abra o app e siga o assistente.
 
-Passo a passo completo, com imagens de texto: [docs/INSTALAR.md](docs/INSTALAR.md).
+Passo a passo completo: [guia em PDF](docs/Guia-MotoNav.pdf) (para mandar no grupo) ou [docs/INSTALAR.md](docs/INSTALAR.md).
 
 ## Como compilar
 
