@@ -302,7 +302,16 @@ class DashLink private constructor(ctx: Context) {
                     ble = link
                     val r = link.provision { state(it) }
                     if (r != null && running.get()) {
-                        link.onLost = { DashLog.d("Bluetooth do painel caiu (moto desligada?)"); onSessionLost() }
+                        link.onLost = {
+                            // Depois que o painel está no hotspot, o Bluetooth só serve para acertar a hora.
+                            // Em alguns celulares ele cai sozinho (status 8) com tudo funcionando pelo Wi-Fi:
+                            // quem decide se a moto desligou é o Wi-Fi (C2P/P2C/vídeo param em ~12 s).
+                            val now = System.currentTimeMillis()
+                            // (antes do vídeo: o wakeup/C2P já têm prazos próprios e chamam onSessionLost)
+                            if (now - rv.lastPollAt < 5_000 || now - lastP2cRxAt < 6_000 || videoStartAt == 0L)
+                                DashLog.d("Bluetooth do painel caiu, mas o Wi-Fi com o painel continua: mantendo a conexão")
+                            else { DashLog.d("Bluetooth do painel caiu e o Wi-Fi está parado (moto desligada?)"); onSessionLost() }
+                        }
                         sessionGen++
                         sessionStarted.set(true)
                         connecting.set(true)

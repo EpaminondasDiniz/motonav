@@ -148,13 +148,18 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- Atualização e relatório ----------
 
-    /** Procura versão nova no GitHub (1x por dia, ou na hora com [force]). */
+    @Volatile private var updateBusy = false
+
+    /** Procura versão nova no GitHub (no máximo a cada 3 h, ou na hora com [force]). */
     private fun checkUpdates(force: Boolean) {
         if (!Updater.enabled) { if (force) toast("Esta versão não procura atualizações"); return }
+        if (!force && updateBusy) return // onResume + fim do assistente ao mesmo tempo: um aviso só
         if (force) toast("Procurando atualização…")
+        updateBusy = true
         io.execute {
             val r = runCatching { Updater.check(this, force) }.getOrNull()
             runOnUiThread {
+                updateBusy = false
                 if (r == null) { if (force) toast("Você já está na versão mais nova (${BuildConfig.VERSION_NAME})"); return@runOnUiThread }
                 AlertDialog.Builder(this)
                     .setTitle("Versão nova: ${r.version}")
@@ -276,7 +281,6 @@ class MainActivity : AppCompatActivity() {
         setupWizard()
         if (!wizard.showing) {
             Garage.dueText()?.let { toast("🔧 $it") }
-            checkUpdates(force = false)
         }
         handleConnectIntent(intent)
     }
@@ -1982,6 +1986,9 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         mapView.onResume()
         if (::wizard.isInitialized && wizard.showing) wizard.refresh() else warnBatterySaver()
+        // a cada volta ao app (antes só no onCreate: o app que ficava vivo em segundo plano nunca procurava);
+        // o Updater limita a 1x a cada 3 h e só conta a consulta que deu certo
+        if (::wizard.isInitialized && !wizard.showing) checkUpdates(force = false)
         if (::homeView.isInitialized && screen == Screen.HOME) refreshHome()
         if (::raceScreen.isInitialized && screen == Screen.RACE) startRaceOnPhone()
         if (::maintScreen.isInitialized && screen == Screen.MAINT) refreshMaint()

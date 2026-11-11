@@ -74,7 +74,16 @@ class BleLink(private val ctx: Context, private val dash: DashPairing.Dash, priv
     /** O painel apareceu no Bluetooth? */
     @Volatile var found = false
 
-    private fun fail(msg: String): Result? { why = msg; DashLog.d("BLE: $msg"); return null }
+    /** Se a busca foi interrompida (Desconectar, app reiniciado), não registra motivo nenhum:
+     *  antes saía "não contou o IP em 40 s" na hora, sem ter esperado nada. */
+    private fun fail(msg: String): Result? {
+        if (!alive() || closed) { why = ""; return null }
+        why = msg; DashLog.d("BLE: $msg"); return null
+    }
+
+    /** Quando o Bluetooth caiu (0 = conectado). */
+    @Volatile private var lostAt = 0L
+    @Volatile private var lostStatus = 0
 
     /** Faz tudo; devolve os IPs ou null (o motivo vai para o log/estado e em [why]). */
     fun provision(state: (String) -> Unit): Result? {
@@ -95,17 +104,102 @@ class BleLink(private val ctx: Context, private val dash: DashPairing.Dash, priv
         val apFrame = EcBtp.apInfo(ap.ssid, ap.pwd, ap.auth, phoneIp.hostAddress ?: "")
             ?: return fail("nome/senha do hotspot grandes demais para o quadro BLE")
         frames.clear()
-        state("Passando o hotspot para o painel...")
+        state("Passando o hotspot para o painel (leva uns 15 s, aguarde)...")
         if (!write(apFrame, "AP_INFO (hotspot, senha oculta)")) return fail("falhou ao mandar o hotspot (0x52) pelo Bluetooth")
-        val info = waitFrame(NET_INFO_MS) { it.cmd == EcBtp.CAR_NET_INFO }
-            ?: return fail("hotspot enviado (${ap.auth}), mas o painel não contou o IP (0x53) em ${NET_INFO_MS / 1000} s")
-        val ip = EcBtp.ips(info).firstOrNull() ?: return fail("0x53 sem IP: $info")
-        DashLog.d("BLE <- painel entrou no hotspot com IP $ip")
-        write(EcBtp.build(EcBtp.BUILD_NET_FINISH), "BUILD_NET_FINISH")
-        write(EcBtp.syncTime(), "hora (0x01)") // o relógio do painel conta desde a ignição se ninguém acertar
+        val sentAt = System.currentTimeMillis()
+        val ip = waitPanelIp(phoneIp)
+            ?: return fail("hotspot enviado (${ap.auth}), mas o painel não entrou nele em ${NET_INFO_MS / 1000} s" +
+                (if (lostAt > 0) " (o Bluetooth caiu com status $lostStatus ${(lostAt - sentAt) / 1000} s depois do hotspot e o painel também não apareceu na rede)"
+                else " (nem contou o IP pelo Bluetooth, nem apareceu na rede)"))
+        if (gatt != null && lostAt == 0L) {
+            write(EcBtp.build(EcBtp.BUILD_NET_FINISH), "BUILD_NET_FINISH")
+            write(EcBtp.syncTime(), "hora (0x01)") // o relógio do painel conta desde a ignição se ninguém acertar
+            startTimeResponder()
+        }
         provisioned = true
-        startTimeResponder()
-        return Result(InetAddress.getByName(ip), phoneIp)
+        return Result(ip, phoneIp)
+    }
+
+    /**
+     * Espera o painel entrar no hotspot. Dois caminhos ao mesmo tempo:
+     *  - o 0x53 pelo Bluetooth (o painel conta o IP que recebeu);
+     *  - procurar o painel na rede do hotspot (porta 10930 nos 254 endereços).
+     * O segundo existe por causa do celular do 4º/5º log (Xiaomi 22101320G, Android 14): o Bluetooth
+     * cai (status 8, sinal perdido) uns 8 s depois do hotspot, justo quando o painel troca o rádio para
+     * entrar no Wi-Fi, e o 0x53 nunca chegava. O hotspot é só do app, então quem aparece nele é o painel.
+     */
+    private fun waitPanelIp(phoneIp: InetAddress): InetAddress? {
+        val found = java.util.concurrent.atomic.AtomicReference<InetAddress?>(null)
+        val until = System.currentTimeMillis() + NET_INFO_MS
+        val prober = Thread({
+            Thread.sleep(2500) // o painel leva ~10 s para entrar; antes disso não há ninguém
+            var round = 0
+            while (found.get() == null && alive() && !closed && System.currentTimeMillis() < until) {
+                round++
+                probeSubnet(phoneIp, until)?.let { if (found.compareAndSet(null, it)) DashLog.d("hotspot: painel achado na rede em ${it.hostAddress} (busca $round)") }
+                if (found.get() == null) Thread.sleep(1000)
+            }
+        }, "dash-hotspot-probe").apply { isDaemon = true }
+        prober.start()
+        var lostLogged = false
+        try {
+            while (alive() && !closed && System.currentTimeMillis() < until) {
+                found.get()?.let {
+                    if (lostAt > 0) DashLog.d("BLE: o Bluetooth caiu, mas o painel entrou no hotspot: seguindo pelo Wi-Fi")
+                    return it
+                }
+                if (lostAt > 0 && !lostLogged) {
+                    lostLogged = true
+                    DashLog.d("BLE: Bluetooth caiu depois do hotspot; continuo procurando o painel na rede do hotspot")
+                }
+                val f = frames.poll(300, TimeUnit.MILLISECONDS) ?: continue
+                if (answerTime(f)) continue
+                if (f.cmd != EcBtp.CAR_NET_INFO) { DashLog.d("BLE <- $f"); continue }
+                val ip = EcBtp.ips(f).firstOrNull()
+                if (ip == null) { DashLog.d("BLE: 0x53 sem IP: $f"); continue }
+                DashLog.d("BLE <- painel entrou no hotspot com IP $ip")
+                found.compareAndSet(null, InetAddress.getByName(ip))
+                return found.get()
+            }
+            return found.get()
+        } finally {
+            found.compareAndSet(null, phoneIp) // só para o prober parar
+        }
+    }
+
+    /**
+     * Procura o painel na rede do hotspot: tenta a porta 10930 em todos os endereços da /24 do
+     * celular, 64 de cada vez. "Conexão recusada" também vale: o aparelho existe e só ainda não
+     * abriu a porta (o wakeup tenta de novo por 20 s).
+     */
+    private fun probeSubnet(phoneIp: InetAddress, until: Long): InetAddress? {
+        val b = phoneIp.address
+        if (b.size != 4) return null
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(64)
+        val hit = java.util.concurrent.atomic.AtomicReference<InetAddress?>(null)
+        try {
+            val jobs = (1..254).filter { it != (b[3].toInt() and 0xFF) }.map { host ->
+                pool.submit {
+                    if (hit.get() != null || closed || System.currentTimeMillis() > until) return@submit
+                    val addr = InetAddress.getByAddress(byteArrayOf(b[0], b[1], b[2], host.toByte()))
+                    try {
+                        java.net.Socket().use { s ->
+                            s.bind(java.net.InetSocketAddress(phoneIp, 0))
+                            s.connect(java.net.InetSocketAddress(addr, Pxc.PORT_WAKEUP), 800)
+                        }
+                        hit.compareAndSet(null, addr)
+                    } catch (e: java.net.ConnectException) {
+                        // ECONNREFUSED = alguém respondeu; sem rota/timeout = ninguém nesse endereço
+                        if (e.message?.contains("ECONNREFUSED") == true || e.message?.contains("refused", true) == true)
+                            hit.compareAndSet(null, addr)
+                    } catch (_: Exception) {}
+                }
+            }
+            jobs.forEach { runCatching { it.get() } }
+        } finally {
+            pool.shutdownNow()
+        }
+        return hit.get()
     }
 
     fun close() {
@@ -125,11 +219,24 @@ class BleLink(private val ctx: Context, private val dash: DashPairing.Dash, priv
         val scanner = bt?.adapter?.bluetoothLeScanner ?: return null
         val exact = dash.bleMac?.uppercase()
         val name = dash.bleName?.uppercase()
+        fun isPanel(d: BluetoothDevice) = (exact != null && d.address.equals(exact, true)) ||
+            (name != null && runCatching { d.name }.getOrNull()?.uppercase() == name)
+        // Um painel BLE para de se anunciar quando já tem alguém conectado. Se for este celular
+        // (pareado nas configurações do Android, ou outro app segurando a conexão), a busca não o vê.
+        runCatching { bt?.getConnectedDevices(BluetoothProfile.GATT)?.firstOrNull { isPanel(it) } }.getOrNull()?.let {
+            DashLog.d("BLE: o painel já está conectado a este celular (pelo sistema ou outro app): usando essa conexão")
+            return it
+        }
+        runCatching { bt?.adapter?.bondedDevices?.firstOrNull { isPanel(it) } }.getOrNull()?.let {
+            DashLog.d("BLE: o painel está PAREADO nas configurações de Bluetooth do Android (não precisa; se não conectar, remova esse pareamento)")
+        }
         var best: ScanResult? = null
         var match: BluetoothDevice? = null
+        val seen = java.util.Collections.synchronizedSet(HashSet<String>())
         val done = CountDownLatch(1)
         val cb = object : ScanCallback() {
             override fun onScanResult(type: Int, r: ScanResult) {
+                seen.add(r.device.address)
                 val n = (r.scanRecord?.deviceName ?: runCatching { r.device.name }.getOrNull())?.uppercase()
                 val uuids = r.scanRecord?.serviceUuids?.joinToString(" ") { it.uuid.toString() }.orEmpty().lowercase()
                 if ((exact != null && r.device.address.equals(exact, true)) || (name != null && n == name)) {
@@ -146,15 +253,33 @@ class BleLink(private val ctx: Context, private val dash: DashPairing.Dash, priv
         }
         val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
         runCatching { scanner.startScan(null, settings, cb) }.onFailure { DashLog.d("BLE: ${it.message}"); return null }
+        // Busca com filtro ao mesmo tempo: alguns Android (Xiaomi/HyperOS) cortam a busca sem filtro
+        // com o app em segundo plano ou a tela apagada; com filtro ela continua.
+        val filters = buildList {
+            exact?.let { runCatching { add(android.bluetooth.le.ScanFilter.Builder().setDeviceAddress(it).build()) } }
+            dash.bleName?.let { add(android.bluetooth.le.ScanFilter.Builder().setDeviceName(it).build()) }
+            add(android.bluetooth.le.ScanFilter.Builder().setServiceUuid(android.os.ParcelUuid(SERVICE)).build())
+        }
+        // outro objeto de retorno: o Android recusa o mesmo callback em duas buscas
+        val cb2 = object : ScanCallback() {
+            override fun onScanResult(type: Int, r: ScanResult) = cb.onScanResult(type, r)
+            override fun onScanFailed(errorCode: Int) { DashLog.d("BLE: busca com filtro falhou ($errorCode)") }
+        }
+        val filtered = runCatching { scanner.startScan(filters, settings, cb2) }.isSuccess
         val deadline = System.currentTimeMillis() + SCAN_MS
         while (alive() && System.currentTimeMillis() < deadline && !done.await(250, TimeUnit.MILLISECONDS)) {
             // sem nome/endereço conhecido, o 1º painel "parecido" serve depois de 5 s de busca
             if (exact == null && name == null && best != null && System.currentTimeMillis() > deadline - SCAN_MS + 5_000) break
         }
         runCatching { scanner.stopScan(cb) }
+        if (filtered) runCatching { scanner.stopScan(cb2) }
         match?.let { return it }
         if (exact == null && name == null) return best?.device
         best?.let { DashLog.d("BLE: o painel do QR (${dash.bleName}) não apareceu; há outro painel por perto (${it.scanRecord?.deviceName})") }
+        if (alive()) DashLog.d("BLE: o painel não se anunciou em ${SCAN_MS / 1000} s; a busca viu ${seen.size} aparelhos Bluetooth" +
+            (if (seen.isEmpty()) " (a busca do celular não está funcionando: localização desligada?)"
+            else " (o painel pode estar conectado a outro celular: o do garupa, outro app ou um celular antigo pareado)") +
+            ". Tentando conectar direto pelo endereço do QR")
         // com o endereço Bluetooth do QR dá para tentar conectar direto
         return exact?.let { runCatching { bt?.adapter?.getRemoteDevice(it) }.getOrNull() }
     }
@@ -166,6 +291,7 @@ class BleLink(private val ctx: Context, private val dash: DashPairing.Dash, priv
             if (!alive()) return false
             events.clear()
             serial = null
+            lostAt = 0L
             gatt = dev.connectGatt(ctx, false, callback, BluetoothDevice.TRANSPORT_LE)
             val ev = events.poll(15, TimeUnit.SECONDS)
             var was133 = ev?.endsWith(":133") == true
@@ -176,6 +302,9 @@ class BleLink(private val ctx: Context, private val dash: DashPairing.Dash, priv
                 // MTU maior: o quadro do hotspot (~120 bytes) cabe numa escrita só
                 gatt?.requestMtu(247)
                 waitEvent("mtu", 3_000)
+                // intervalo curto entre os pacotes de rádio: o link aguenta melhor o painel
+                // dividindo o rádio com o Wi-Fi enquanto entra no hotspot
+                runCatching { gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH) }
                 if (discover(attempt)) return enableNotify()
             } else DashLog.d("BLE: conexão falhou (tentativa $attempt, $ev)")
             // o Android às vezes falha a conexão (status 133); fechar, esperar e tentar de novo resolve
@@ -313,7 +442,8 @@ class BleLink(private val ctx: Context, private val dash: DashPairing.Dash, priv
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
             if (newState == BluetoothProfile.STATE_CONNECTED) events.offer("conn:true")
             else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                DashLog.d("BLE: desconectado (status $status)")
+                DashLog.d("BLE: desconectado (status $status" + (if (status == 8) ", sinal perdido" else "") + ")")
+                if (serial != null && lostAt == 0L) { lostAt = System.currentTimeMillis(); lostStatus = status }
                 events.offer("conn:false:$status")
                 if (provisioned && !closed) onLost?.invoke()
             }

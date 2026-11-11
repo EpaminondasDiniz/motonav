@@ -26,7 +26,6 @@ object Updater {
         val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
         if (!force && now - p.getLong("lastCheck", 0L) < DAY_MS) return null
-        p.edit().putLong("lastCheck", now).apply()
         val conn = URL("https://api.github.com/repos/${BuildConfig.UPDATE_REPO}/releases/latest").openConnection() as HttpURLConnection
         val json = try {
             conn.connectTimeout = 6_000
@@ -35,6 +34,7 @@ object Updater {
             conn.setRequestProperty("User-Agent", "MotoNav-updater")
             if (conn.responseCode != 200) { DashLog.d("atualização: GitHub respondeu ${conn.responseCode}"); return null }
             JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                .also { p.edit().putLong("lastCheck", now).apply() } // só conta se o GitHub respondeu (sem internet, tenta de novo)
         } finally {
             conn.disconnect()
         }

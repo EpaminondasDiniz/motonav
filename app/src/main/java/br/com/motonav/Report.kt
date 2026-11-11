@@ -22,6 +22,27 @@ import java.util.Locale
 object Report {
     const val CARBIT_PACKAGE = "net.easyconn.easyride.wws"
 
+    /**
+     * Painel novo: coisas do Bluetooth do celular que atrapalham a conexão com o painel
+     * (caso do Xiaomi 22101320G de 10–11/11: o painel nunca aparecia na busca e o link caía).
+     */
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun bleExtras(ctx: Context, d: DashPairing.Dash): String = runCatching {
+        val bm = ctx.getSystemService(android.bluetooth.BluetoothManager::class.java)
+        val a = bm.adapter
+        fun isPanel(x: android.bluetooth.BluetoothDevice) = (d.bleMac != null && x.address.equals(d.bleMac, true)) ||
+            (d.bleName != null && runCatching { x.name }.getOrNull().equals(d.bleName, true))
+        val bonded = runCatching { a.bondedDevices.any { isPanel(it) } }.getOrNull()
+        val connected = runCatching { bm.getConnectedDevices(android.bluetooth.BluetoothProfile.GATT).any { isPanel(it) } }.getOrNull()
+        val audio = runCatching {
+            a.getProfileConnectionState(android.bluetooth.BluetoothProfile.A2DP) == android.bluetooth.BluetoothProfile.STATE_CONNECTED ||
+                a.getProfileConnectionState(android.bluetooth.BluetoothProfile.HEADSET) == android.bluetooth.BluetoothProfile.STATE_CONNECTED
+        }.getOrNull()
+        fun yn(b: Boolean?) = when (b) { true -> "SIM"; false -> "não"; null -> "?" }
+        "Bluetooth do painel: pareado no Android ${yn(bonded)} · conectado agora ${yn(connected)} · " +
+            "áudio Bluetooth (intercomunicador/fone) ${yn(audio)}"
+    }.getOrDefault("Bluetooth do painel: ?")
+
     fun build(ctx: Context): String {
         val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
         val wifi = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -50,6 +71,7 @@ object Report {
         sb.appendLine("Moto: ${DashScreen.bikeModel.ifBlank { "não informada" }}")
         sb.appendLine("Painel: ${Compat.panelModel.ifBlank { "ainda não conectou" }} · canal ${Compat.panelChannel.ifBlank { "?" }} · tela ${Compat.screen.ifBlank { "?" }}")
         sb.appendLine("Pareado: " + (DashPairing.load(ctx)?.let { "${it.name} · " + if (it.isBle) "modelo novo (Bluetooth + hotspot)" else "Wi-Fi Direct" } ?: "não"))
+        DashPairing.load(ctx)?.takeIf { it.isBle }?.let { sb.appendLine(bleExtras(ctx, it)) }
         sb.appendLine("Carbit Ride instalado: ${if (installed(ctx, CARBIT_PACKAGE)) "sim (forçar parada antes de usar)" else "não"}")
         sb.appendLine("Tela: ${DashScreen.mode} · estilo Race: ${DashScreen.raceStyle.title}")
         sb.appendLine("Chave TomTom: ${if (TomTom.enabled) (if (TomTom.hasUserKey) "digitada no app" else "do APK") else "não"}")
